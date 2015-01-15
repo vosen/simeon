@@ -186,6 +186,17 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         unimplemented!()
     }
 
+    fn advance_ident(&mut self) -> u32 {
+        loop {
+            match self.r.peek() {
+                Some(x) if !x.is_xid_continue() => break,
+                None => break,
+                _ => { }
+            }
+        }
+        self.r.current_position()
+    }
+
     fn advance_token(&mut self) -> Option<(Token, Span)> {
         let curr = self.r.peek();
         if curr.is_none() {
@@ -195,36 +206,55 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         if curr.is_whitespace() {
             return Some((Token::Whitespace, self.advance_whitespace()));
         }
-        let mut backbuffer = ['\x00'; 4];
-        let mut backbuffer_count = 0;
+        let token_start = self.r.current_position();
         match curr {
             '"' => { return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true, true))); },
             '\'' => { return Some((Token::CharLiteral, self.advance_literal('\'', true, true))); },
             'b' => {
-                let start = self.r.current_position();
-                backbuffer[0] = 'b';
-                backbuffer_count = 1;
                 self.r.advance();
                 match self.r.peek() {
                     Some('\'') => {
                         let quoted_span = self.advance_literal('\'', true, false);
-                        return Some((Token::ByteLiteral, Span { start: start, end: quoted_span.end } ));
+                        return Some((Token::ByteLiteral, Span { start: token_start, end: quoted_span.end } ));
                     },
                     Some('"') => {
                         let quoted_span = self.advance_literal('"', true, false);
-                        return Some((Token::ByteStringLiteral(LiteralKind::Normal), Span { start: start, end: quoted_span.end } ));
+                        return Some((Token::ByteStringLiteral(LiteralKind::Normal), Span { start: token_start, end: quoted_span.end } ));
                     },
                     Some(_) | None => { }
                 }
             },
-            _ => unimplemented!()
+            x if x.is_xid_start() => {
+                self.r.advance();
+                return Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));
+            },
+            x =>  panic!(format!("Unexpected char {:}", x))
         };
         // We reach this point when failing to match literals
         // For example, upon seeing `b` we hope that we are parsing byte literal
         // Obviously, sometimes this fails and we are actually parsing idents
-        // Last peek(...)'ed characters are in small lexing backbuffer
+        let result = Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));
         self.err_recovery = false;
-        unimplemented!()
+        return result;
+    }
+
+    pub fn scan<'a>(&'a mut self) -> LexerIterator<'a, 'this, S>  {
+        LexerIterator { lexer: self, marker: ::std::marker::ContravariantLifetime }
+    }
+}
+
+// borrow checker will cry that ptr reference can be larger than lexer lifetime,
+// which is simply untrue due to the way we construct our iterator
+pub struct LexerIterator<'this, 'lexer, S:StringScanner> {
+    lexer: *mut Lexer<'lexer, S>,
+    marker: ::std::marker::ContravariantLifetime<'this>
+}
+
+impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S> {
+    type Item = (Token, Span);
+
+    fn next(&mut self) -> Option<(Token, Span)> {
+        unsafe { &mut*(self.lexer) }.advance_token()
     }
 }
 
