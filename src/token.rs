@@ -1,10 +1,10 @@
-#[derive(PartialEq, Eq, Copy)]
+#[derive(PartialEq, Eq, Copy, Show)]
 pub enum LiteralKind {
     Normal,
     Raw,
 }
 
-#[derive(PartialEq, Eq, Copy)]
+#[derive(PartialEq, Eq, Copy, Show)]
 pub enum Token {
     Error,
     Whitespace,
