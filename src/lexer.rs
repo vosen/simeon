@@ -1,7 +1,6 @@
 /* Concrete lexer that can lex on string reading interface */
 use super::Span;
-use super::token::Token;
-use super::token::LiteralKind;
+use super::token::{Token, LiteralKind, BinOpKind};
 
 pub trait StringScanner : Send {
     // returns eof: \u0003 at the end of the text
@@ -15,7 +14,7 @@ pub trait StringScanner : Send {
     }
 }
 
-#[derive(PartialEq, Eq, Copy, Show)]
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum LexingError {
     Eof,
     UnexpectedChar,
@@ -117,10 +116,9 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn advance_single(&mut self) -> Span {
-        let start = self.r.current_position();
+    fn advance_single(&mut self) -> u32 {
         self.r.advance();
-        return Span { start: start, end: self.r.current_position() };
+        return self.r.current_position();
     }
 
     fn advance_whitespace(&mut self) -> Span {
@@ -208,8 +206,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
         let token_start = self.r.current_position();
         match curr {
-            '"' => { return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true, true))); },
-            '\'' => { return Some((Token::CharLiteral, self.advance_literal('\'', true, true))); },
+            '"' => return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true, true))),
+            '\'' => return Some((Token::CharLiteral, self.advance_literal('\'', true, true))),
             'b' => {
                 self.r.advance();
                 match self.r.peek() {
@@ -224,6 +222,52 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                     Some(_) | None => { }
                 }
             },
+            '=' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('>') => return Some((Token::FatArrow, Span { start:token_start, end: self.advance_single() })),
+                    Some('=') => return Some((Token::EqEq, Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::Lt, Span { start:token_start, end: first_span_end }))
+                }
+            },
+            '<' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::Le, Span { start:token_start, end: self.advance_single() })),
+                    Some('<') => return Some((Token::BinOp(BinOpKind::Shl), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::Eq, Span { start:token_start, end: first_span_end }))
+                }
+            },
+            '>' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::Ge, Span { start:token_start, end: self.advance_single() })),
+                    Some('>') => return Some((Token::BinOp(BinOpKind::Shr), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::Gt, Span { start:token_start, end: first_span_end }))
+                }
+            },
+            '&' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('&') => return Some((Token::AndAnd, Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::And), Span { start:token_start, end: first_span_end }))
+                }
+            },
+            '|' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('|') => return Some((Token::OrOr, Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Or), Span { start:token_start, end: first_span_end }))
+                }
+            },
+            '!' => return Some((Token::Not, Span { start:token_start, end: self.advance_single() })),
+            '~' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '+' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '-' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '*' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '/' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '%' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '^' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
             x if x.is_xid_start() => {
                 self.r.advance();
                 return Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));

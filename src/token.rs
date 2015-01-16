@@ -1,10 +1,24 @@
-#[derive(PartialEq, Eq, Copy, Show)]
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum LiteralKind {
     Normal,
-    Raw,
+    //Raw,
 }
 
-#[derive(PartialEq, Eq, Copy, Show)]
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+pub enum BinOpKind {
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Caret,
+    And,
+    Or,
+    Shl,
+    Shr,
+}
+
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum Token {
     Error,
     Whitespace,
@@ -13,7 +27,6 @@ pub enum Token {
     ByteLiteral, // evaluates to u8
     ByteStringLiteral(LiteralKind), // evaluates to &'static [u8]
     Ident,
-    /*
     Eq,
     Lt,
     Le,
@@ -25,7 +38,8 @@ pub enum Token {
     OrOr,
     Not,
     Tilde,
-    BinOp,
+    BinOp(BinOpKind),
+    /*
     BinOpEq,
     At,
     Dot,
@@ -37,7 +51,9 @@ pub enum Token {
     ModSep,
     RArrow,
     LArrow,
+    */
     FatArrow,
+    /*
     Pound,
     Dollar,
     Question,
