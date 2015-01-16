@@ -1,5 +1,5 @@
 /* Concrete lexer that can lex on string reading interface */
-use super::Span;
+use super::Span; 
 use super::token::{Token, LiteralKind, BinOpKind};
 
 pub trait StringScanner : Send {
@@ -231,25 +231,39 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 }
             },
             '<' => {
-                let first_span_end = self.advance_single();
+                let mut span_end = self.advance_single();
                 match self.r.peek() {
                     Some('=') => return Some((Token::Le, Span { start:token_start, end: self.advance_single() })),
-                    Some('<') => return Some((Token::BinOp(BinOpKind::Shl), Span { start:token_start, end: self.advance_single() })),
-                    _ => return Some((Token::Eq, Span { start:token_start, end: first_span_end }))
+                    Some('-') => return Some((Token::LeftArrow, Span { start:token_start, end: self.advance_single() })),
+                    Some('<') => {
+                        span_end = self.advance_single();
+                        match self.r.peek() {
+                            Some('=') => return Some((Token::BinOpEq(BinOpKind::Shl), Span { start:token_start, end: self.advance_single()})),
+                            _ => return Some((Token::BinOp(BinOpKind::Shl), Span { start:token_start, end: span_end})),
+                        }
+                    }
+                    _ => return Some((Token::Eq, Span { start:token_start, end: span_end }))
                 }
             },
             '>' => {
-                let first_span_end = self.advance_single();
+                let mut span_end = self.advance_single();
                 match self.r.peek() {
                     Some('=') => return Some((Token::Ge, Span { start:token_start, end: self.advance_single() })),
-                    Some('>') => return Some((Token::BinOp(BinOpKind::Shr), Span { start:token_start, end: self.advance_single() })),
-                    _ => return Some((Token::Gt, Span { start:token_start, end: first_span_end }))
+                    Some('>') => {
+                        span_end = self.advance_single();
+                        match self.r.peek() {
+                            Some('=') => return Some((Token::BinOpEq(BinOpKind::Shr), Span { start:token_start, end: self.advance_single()})),
+                            _ => return Some((Token::BinOp(BinOpKind::Shr), Span { start:token_start, end: span_end})),
+                        }
+                    }
+                    _ => return Some((Token::Gt, Span { start:token_start, end: span_end }))
                 }
             },
             '&' => {
                 let first_span_end = self.advance_single();
                 match self.r.peek() {
                     Some('&') => return Some((Token::AndAnd, Span { start:token_start, end: self.advance_single() })),
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::And), Span { start:token_start, end: self.advance_single() })),
                     _ => return Some((Token::BinOp(BinOpKind::And), Span { start:token_start, end: first_span_end }))
                 }
             },
@@ -257,17 +271,88 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 let first_span_end = self.advance_single();
                 match self.r.peek() {
                     Some('|') => return Some((Token::OrOr, Span { start:token_start, end: self.advance_single() })),
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Or), Span { start:token_start, end: self.advance_single() })),
                     _ => return Some((Token::BinOp(BinOpKind::Or), Span { start:token_start, end: first_span_end }))
                 }
             },
             '!' => return Some((Token::Not, Span { start:token_start, end: self.advance_single() })),
             '~' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
-            '+' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
-            '-' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
-            '*' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
-            '/' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
-            '%' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
-            '^' => return Some((Token::Tilde, Span { start:token_start, end: self.advance_single() })),
+            '+' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Plus), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Plus), Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '-' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('>') => return Some((Token::RightArrow, Span { start:token_start, end: self.advance_single() })),
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Minus), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Minus), Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '*' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Star), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Star), Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '/' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Slash), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Slash), Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '%' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Percent), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Percent), Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '^' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('=') => return Some((Token::BinOpEq(BinOpKind::Caret), Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::BinOp(BinOpKind::Caret), Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '@' => return Some((Token::At, Span { start:token_start, end: self.advance_single() })),
+            '.' => {
+                let mut span_end = self.advance_single();
+                match self.r.peek() {
+                    Some('.') => {
+                        span_end = self.advance_single();
+                        match self.r.peek() {
+                            Some('.') => return Some((Token::DotDotDot, Span { start:token_start, end: self.advance_single()})),
+                            _ => return Some((Token::DotDot, Span { start:token_start, end: span_end})),
+                        }
+                    }
+                    _ => return Some((Token::Dot, Span { start:token_start, end: span_end }))
+                }
+            },
+            ',' => return Some((Token::Comma, Span { start:token_start, end: self.advance_single() })),
+            ';' => return Some((Token::Semi, Span { start:token_start, end: self.advance_single() })),
+            ':' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some(':') => return Some((Token::ModSep, Span { start:token_start, end: self.advance_single() })),
+                    _ => return Some((Token::Colon, Span { start:token_start, end: first_span_end })),
+                }
+            },
+            '#' => return Some((Token::Pound, Span { start:token_start, end: self.advance_single() })),
+            '$' => return Some((Token::Dollar, Span { start:token_start, end: self.advance_single() })),
+            '?' => return Some((Token::Question, Span { start:token_start, end: self.advance_single() })),
+            '(' => return Some((Token::LeftParen, Span { start:token_start, end: self.advance_single() })),
+            '[' => return Some((Token::LeftBracket, Span { start:token_start, end: self.advance_single() })),
+            '{' => return Some((Token::LeftBrace, Span { start:token_start, end: self.advance_single() })),
+            ')' => return Some((Token::RightParen, Span { start:token_start, end: self.advance_single() })),
+            ']' => return Some((Token::RightBracket, Span { start:token_start, end: self.advance_single() })),
+            '}' => return Some((Token::RightBrace, Span { start:token_start, end: self.advance_single() })),
+            '_' => return Some((Token::Underscore, Span { start:token_start, end: self.advance_single() })),
             x if x.is_xid_start() => {
                 self.r.advance();
                 return Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));
