@@ -1,4 +1,3 @@
-/* Concrete lexer that can lex on string reading interface */
 use super::Span; 
 use super::token::{Token, LiteralKind, BinOpKind};
 
@@ -490,51 +489,4 @@ fn fail_on_non_ascii() {
     assert!(if let Token::ByteStringLiteral(LiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
     assert!(span.end as usize == text.len());
-}
-
-
-#[test]
-fn lex_underscore() {    
-    let text = "_abc _";
-    let scanner = SimpleStringScanner::new(text.to_string());
-    let mut err_count = 0i32;
-    let mut tokens = Vec::new();
-    {
-        let mut lexer = Lexer::new(scanner, Some(box |&mut: _, _, _| {
-            err_count += 1;
-        }));
-        for t in lexer.scan() {
-            tokens.push(t);
-        }
-    }
-    assert!(err_count == 0);
-    assert!(tokens[0].0 == Token::Ident);
-    assert!(tokens[1].0 == Token::Whitespace);
-    assert!(tokens[2].0 == Token::Underscore);
-}
-
-#[test]
-fn handle_illegal_char() {    
-    let text = "'a'b";
-    let scanner = SimpleStringScanner::new(text.to_string());
-    let mut error = None;
-    let mut err_count = 0i32;
-    let mut err_idx = 0;
-    let mut tokens = Vec::new();
-    {
-        let mut lexer = Lexer::new(scanner, Some(box |&mut: _, er, idx| {
-            err_count += 1;
-            error = Some(er);
-            err_idx = idx;
-        }));
-        for t in lexer.scan() {
-            tokens.push(t);
-        }
-    }
-    assert!(err_count == 1);
-    assert!(error == Some(LexingError::IllegalToken));
-    assert!(err_idx == 3);
-    assert!(tokens.len() == 2);
-    assert!(tokens[0].0 == Token::CharLiteral);
-    assert!(tokens[1].0 == Token::Ident);
 }
