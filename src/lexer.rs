@@ -368,22 +368,19 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
     }
 
     pub fn scan<'a>(&'a mut self) -> LexerIterator<'a, 'this, S>  {
-        LexerIterator { lexer: self, marker: ::std::marker::ContravariantLifetime }
+        LexerIterator { lexer: self }
     }
 }
 
-// borrow checker will cry that ptr reference can be larger than lexer lifetime,
-// which is simply untrue due to the way we construct our iterator
-pub struct LexerIterator<'this, 'lexer, S:StringScanner> {
-    lexer: *mut Lexer<'lexer, S>,
-    marker: ::std::marker::ContravariantLifetime<'this>
+pub struct LexerIterator<'this, 'lexer: 'this, S:StringScanner> {
+    lexer: &'this mut Lexer<'lexer, S>,
 }
 
 impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S> {
     type Item = (Token, Span);
 
     fn next(&mut self) -> Option<(Token, Span)> {
-        unsafe { &mut*(self.lexer) }.advance_token()
+        self.lexer.advance_token()
     }
 }
 
