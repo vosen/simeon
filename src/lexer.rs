@@ -189,7 +189,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             match self.r.peek() {
                 Some(x) if !x.is_xid_continue() => break,
                 None => break,
-                _ => { }
+                _ => { self.r.advance(); }
             }
         }
         self.r.current_position()
@@ -352,7 +352,13 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             ')' => return Some((Token::RightParen, Span { start:token_start, end: self.advance_single() })),
             ']' => return Some((Token::RightBracket, Span { start:token_start, end: self.advance_single() })),
             '}' => return Some((Token::RightBrace, Span { start:token_start, end: self.advance_single() })),
-            '_' => return Some((Token::Underscore, Span { start:token_start, end: self.advance_single() })),
+            '_' => {
+                let first_span_end = self.advance_single();
+                match self.r.peek() {
+                    Some(x) if x.is_xid_continue() => {},
+                    _ => return Some((Token::Underscore, Span { start:token_start, end: first_span_end })),
+                }
+            },
             x if x.is_xid_start() => {
                 self.r.advance();
                 return Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));
@@ -420,7 +426,6 @@ fn lex_string() {
     let (token, span) = span_opt.unwrap();
     assert!(if let Token::StringLiteral(LiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
-    println!("{}", span.end);
     assert!(span.end as usize == text.len());
     assert!(lexer.advance_token().is_none());
 }
@@ -464,7 +469,6 @@ fn fail_on_non_ascii() {
     };
     assert!(err_count == 1);
     assert!(error.is_some());
-    println!("{:?}", error.as_ref());
     assert!(error.unwrap() == LexingError::UnexpectedChar);
     assert!(err_idx == 3);
     assert!(span_opt.is_some());
@@ -472,4 +476,25 @@ fn fail_on_non_ascii() {
     assert!(if let Token::ByteStringLiteral(LiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
     assert!(span.end as usize == text.len());
+}
+
+
+#[test]
+fn lex_underscore() {    
+    let text = "_abc _";
+    let scanner = SimpleStringScanner::new(text.to_string());
+    let mut err_count = 0i32;
+    let mut tokens = Vec::new();
+    {
+        let mut lexer = Lexer::new(scanner, Some(box |&mut: _, _, _| {
+            err_count += 1;
+        }));
+        for t in lexer.scan() {
+            tokens.push(t);
+        }
+    }
+    assert!(err_count == 0);
+    assert!(tokens[0].0 == Token::Ident);
+    assert!(tokens[1].0 == Token::Whitespace);
+    assert!(tokens[2].0 == Token::Underscore);
 }
