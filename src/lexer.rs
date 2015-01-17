@@ -18,7 +18,7 @@ pub trait StringScanner : Send {
 pub enum LexingError {
     Eof,
     UnexpectedChar,
-    IllegalChar
+    IllegalToken
 }
 
 pub struct SimpleStringScanner {
@@ -392,7 +392,7 @@ impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S
         let result = self.lexer.advance_token();
         if self.seen_char { 
             if let Some((Token::Ident, ident_span)) = result {
-                self.lexer.on_error(LexingError::IllegalChar, ident_span.start);
+                self.lexer.on_error(LexingError::IllegalToken, ident_span.start);
                 self.lexer.err_recovery = false;
             }
         }
@@ -532,7 +532,7 @@ fn handle_illegal_char() {
         }
     }
     assert!(err_count == 1);
-    assert!(error == Some(LexingError::IllegalChar));
+    assert!(error == Some(LexingError::IllegalToken));
     assert!(err_idx == 3);
     assert!(tokens.len() == 2);
     assert!(tokens[0].0 == Token::CharLiteral);
