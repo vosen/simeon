@@ -18,7 +18,7 @@ pub trait StringScanner : Send {
 pub enum LexingError {
     Eof,
     UnexpectedChar,
-
+    IllegalChar
 }
 
 pub struct SimpleStringScanner {
@@ -57,12 +57,6 @@ impl StringScanner for SimpleStringScanner {
     fn peek(&self) -> Option<char> {
         self.peek_to(self.idx)
     }
-
-/*
-    fn peek2(&self) -> Option<char> {
-        self.peek_to(self.idx + 1)
-    }
-    */
 
     fn advance(&mut self) {
         if(self.is_eof(self.idx)) {
@@ -104,7 +98,7 @@ fn is_ascii(c: char) -> bool {
 }
 
 impl<'this, S:StringScanner> Lexer<'this, S> {
-    fn on_error(&mut self, err: LexingError) {
+    fn on_error(&mut self, err: LexingError, pos: u32) {
         if self.err_recovery {
             return;
         }
@@ -112,7 +106,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             self.err_recovery = true;
         }
         if let Some(ref mut callback) = self.err_fn {
-            callback(unsafe { &*(self as *mut _) }, err, self.r.current_position())
+            callback(unsafe { &*(self as *mut _) }, err, pos)
         }
     }
 
@@ -140,7 +134,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             let c_opt = self.r.peek();
             match c_opt {
                 None => {
-                    self.on_error(LexingError::Eof);
+                    let curr_pos = self.r.current_position();
+                    self.on_error(LexingError::Eof, curr_pos);
                     break;
                 },
                 Some(x) if x == c_end => {
@@ -153,7 +148,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                             Some('\\') => continue,
                             Some(x) => {
                                 if(!accept_unicode && !is_ascii(x)) {
-                                    self.on_error(LexingError::UnexpectedChar);
+                                    let curr_pos = self.r.current_position();
+                                    self.on_error(LexingError::UnexpectedChar, curr_pos);
                                 }
                                 break;
                             },
@@ -163,7 +159,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 },
                 Some(x) =>{                    
                     if(!accept_unicode && !is_ascii(x)) {
-                        self.on_error(LexingError::UnexpectedChar);
+                        let curr_pos = self.r.current_position();
+                        self.on_error(LexingError::UnexpectedChar, curr_pos);
                     }
                     self.r.advance();
                 }
@@ -196,6 +193,12 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
     }
 
     fn advance_token(&mut self) -> Option<(Token, Span)> {
+        let result = self.advance_token_inner();
+        self.err_recovery = false;
+        return result;
+    }
+
+    fn advance_token_inner(&mut self) -> Option<(Token, Span)> {
         let curr = self.r.peek();
         if curr.is_none() {
             return None;
@@ -368,25 +371,36 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         // We reach this point when failing to match literals
         // For example, upon seeing `b` we hope that we are parsing byte literal
         // Obviously, sometimes this fails and we are actually parsing idents
-        let result = Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));
-        self.err_recovery = false;
-        return result;
+        return Some((Token::Ident, Span { start:token_start, end: self.advance_ident() }));
     }
 
     pub fn scan<'a>(&'a mut self) -> LexerIterator<'a, 'this, S>  {
-        LexerIterator { lexer: self }
+        LexerIterator { lexer: self, seen_char: false }
     }
 }
 
 pub struct LexerIterator<'this, 'lexer: 'this, S:StringScanner> {
     lexer: &'this mut Lexer<'lexer, S>,
+    seen_char: bool
 }
 
 impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S> {
     type Item = (Token, Span);
 
+    // Most of this code is proper error handling of 'a'b
     fn next(&mut self) -> Option<(Token, Span)> {
-        self.lexer.advance_token()
+        let result = self.lexer.advance_token();
+        if self.seen_char { 
+            if let Some((Token::Ident, ident_span)) = result {
+                self.lexer.on_error(LexingError::IllegalChar, ident_span.start);
+                self.lexer.err_recovery = false;
+            }
+        }
+        match result {
+            Some((Token::CharLiteral, _)) => { self.seen_char = true; },
+            _ => { self.seen_char = false; },
+        }
+        return result;
     }
 }
 
@@ -497,4 +511,30 @@ fn lex_underscore() {
     assert!(tokens[0].0 == Token::Ident);
     assert!(tokens[1].0 == Token::Whitespace);
     assert!(tokens[2].0 == Token::Underscore);
+}
+
+#[test]
+fn handle_illegal_char() {    
+    let text = "'a'b";
+    let scanner = SimpleStringScanner::new(text.to_string());
+    let mut error = None;
+    let mut err_count = 0i32;
+    let mut err_idx = 0;
+    let mut tokens = Vec::new();
+    {
+        let mut lexer = Lexer::new(scanner, Some(box |&mut: _, er, idx| {
+            err_count += 1;
+            error = Some(er);
+            err_idx = idx;
+        }));
+        for t in lexer.scan() {
+            tokens.push(t);
+        }
+    }
+    assert!(err_count == 1);
+    assert!(error == Some(LexingError::IllegalChar));
+    assert!(err_idx == 3);
+    assert!(tokens.len() == 2);
+    assert!(tokens[0].0 == Token::CharLiteral);
+    assert!(tokens[1].0 == Token::Ident);
 }

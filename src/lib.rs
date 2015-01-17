@@ -8,12 +8,12 @@ extern crate syntax;
 
 /*
  * Rust's lexical grammar is not unambiguous.
- * 'a'b can parse either as <Lifetime><Lifetime
+ * 'a'b can parse either as <Lifetime><Lifetime>
  * or <CharLiteral><Ident>. Libsyntax lexer panic!()s on that.
  * I've took stats from servo and rust sources.
  * Rate of <Lifetime><Token>?<Lifetime> to <CharLiteral><Token>?<Ident>
  * is 378 to 485 in rust and 3 to 49 in servo.
- * That's why we go with the second choice (and raise an error).
+ * That's why we go with the second choice (and raise IllegalChar).
  */
 pub mod lexer;
 pub mod token;
