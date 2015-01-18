@@ -18,7 +18,9 @@ pub enum LexingError {
     Eof,
     UnexpectedChar,
     IllegalToken,
-    UnterminatedLiteral
+    UnterminatedLiteral,
+    NonAsciiByte,
+    InvalidEscapeSeq
 }
 
 pub struct SimpleStringScanner {
@@ -174,27 +176,34 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         return Span { start: start, end: self.r.current_position() }
     }
 
-    fn advance_while_xid_continue(&mut self, start: u32) -> (Token, Span) {
+    fn recover_while_looks_like_char(&mut self) -> bool {
         let xid_continue_start = self.r.current_position();
         loop {
             match self.r.peek() {
                 Some('\'') => {
                     self.on_error(LexingError::UnexpectedChar, xid_continue_start);
                     self.r.advance();
-                    return (Token::CharLiteral, Span { start: start, end: self.r.current_position() });
+                    return true;
                 }
                 Some(c) if c.is_xid_continue() => self.r.advance(),
-                Some(_) | None => return (Token::Lifetime, Span { start: start, end: self.r.current_position() })
+                Some(_) | None => return false
             }
         }
     }
 
-    fn advance_byte_literal_or_lifetime(&mut self) -> (Token, Span) {
+    fn check_unicode(&mut self, c: char) {
+        if c > '\x7f' {
+            let curr_pos = self.r.current_position();
+            self.on_error(LexingError::NonAsciiByte, curr_pos);
+        }
+    }
+
+    fn advance_byte_literal_or_lifetime(&mut self, unicode: bool) -> (Token, Span) {
         debug_assert!(self.r.peek() == Some('\''));
         let start = self.r.current_position();
         self.r.advance();
         match self.r.peek() {
-            Some('\\') => (Token::CharLiteral, Span { start: start, end: self.advance_escape_seq() }), // byte mode
+            Some('\\') => (Token::CharLiteral, Span { start: start, end: self.advance_escape_seq(unicode) }), // byte mode
             None => { // I'm tempted to do if ::std::rand::random::<bool>() { Token::Lifetime } else { Token::CharLiteral }
                 let curr_pos = self.r.current_position();
                 self.on_error(LexingError::Eof, curr_pos);
@@ -209,9 +218,24 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 self.r.advance();
                 match self.r.peek() {
                     Some('\'') => (Token::CharLiteral, Span {start: start, end: self.advance_single()}),
-                    _ =>  self.advance_while_xid_continue(start)
+                    _ =>  {
+                        let token = if self.recover_while_looks_like_char() { Token::CharLiteral } else { Token::Lifetime };
+                        return (token, Span {start: start, end: self.r.current_position()})
+                    } 
                 }
             }
+        }
+    }
+
+    fn advance_hex_digits(&mut self) -> u32 {
+        debug_assert!(self.r.peek() == Some('x'));
+        let digits_start = self.r.advance();
+        let mut accum_int = 0;
+        match self.r.peek() {
+            Some(c) => {
+                unimplemented!()
+            }
+            _ => unimplemented!()
         }
     }
 
@@ -226,7 +250,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
      * unterminated seq (spotting whitespace before `'`): UnterminatedLiteral
      * and eofs
      */
-    fn advance_escape_seq(&mut self,) -> u32 {
+    fn advance_escape_seq(&mut self, unicode: bool) -> u32 {
         debug_assert!(self.r.peek() == Some('\\'));
         self.r.advance();
         match self.r.peek() {
@@ -238,6 +262,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             Some(esc_mark) => {
                 match esc_mark {
                     'n' | 'r' | 't' | '\\' | '\'' | '"' | '0' => self.advance_single(),
+                    'x' => self.advance_hex_digits(),
                     _ => unimplemented!()
                 }
             }
@@ -273,7 +298,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         let token_start = self.r.current_position();
         match curr {
             '"' => return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true))),
-            '\'' => return Some(self.advance_byte_literal_or_lifetime()),
+            '\'' => return Some(self.advance_byte_literal_or_lifetime(true)),
             'b' => {
                 self.r.advance();
                 match self.r.peek() {
