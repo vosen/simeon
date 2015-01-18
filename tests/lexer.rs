@@ -42,7 +42,7 @@ mod lexer {
                 let text = $text;
                 let scanner = SimpleStringScanner::new(text.to_string());
                 let mut tokens = Vec::new();
-                let mut last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
+                let last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
                 let mut lexer = Lexer::new(scanner, Some(box |&mut: _, er, idx| {
                     if let Some(err_unwrapped) = last_error.get() {
                         panic!("raised more than one error for a token. old: {:?}, new: {:?}", err_unwrapped, (er,idx));
@@ -70,4 +70,9 @@ mod lexer {
     lexer_test_errors!(illegal_char_errors("'a'b", [(Token::CharLiteral, None), (Token::Ident, Some((LexingError::IllegalToken, 3))) ]));
     lexer_test!(lex_underscore("_abc _", [(Token::Ident, (0, 4)), (Token::Whitespace, (4,5)), (Token::Underscore, (5,6)) ]));
     lexer_test!(byte_char("b'a'b", [(Token::ByteLiteral, (0, 4)), (Token::Ident, (4, 5)) ]));
+    lexer_test!(single_single_quote("'", [(Token::CharLiteral, (0, 1)) ]));
+    lexer_test_errors!(single_single_quote_error("'", [(Token::CharLiteral, Some((LexingError::Eof, 1))) ]));
+    lexer_test!(byte_too_long("'ab'", [(Token::CharLiteral, (0, 4)) ]));
+    lexer_test_errors!(byte_too_long_error("'ab'", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 2))) ]));
+    //lexer_test_errors!(byte_unicode_escape("b'\\u{0}'", [(Token::ByteLiteral, Some((LexingError::UnexpectedChar, 3))) ]));
 }

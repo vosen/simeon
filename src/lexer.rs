@@ -17,7 +17,8 @@ pub trait StringScanner : Send {
 pub enum LexingError {
     Eof,
     UnexpectedChar,
-    IllegalToken
+    IllegalToken,
+    UnterminatedLiteral
 }
 
 pub struct SimpleStringScanner {
@@ -127,8 +128,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
     }
 
 
-    fn advance_until_end_of_string(&mut self, c_end: char, escape: bool, accept_unicode: bool) {
-        assert!(escape);
+    fn advance_until_end_of_string(&mut self, c_end: char, accept_unicode: bool) {
         loop {
             let c_opt = self.r.peek();
             match c_opt {
@@ -167,17 +167,81 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn advance_literal(&mut self, c_end: char, escape: bool, accept_unicode: bool) -> Span {
+    fn advance_literal(&mut self, c_end: char, accept_unicode: bool) -> Span {
         let start = self.r.current_position();
         self.r.advance();
-        self.advance_until_end_of_string(c_end, escape, accept_unicode);
+        self.advance_until_end_of_string(c_end, accept_unicode);
         return Span { start: start, end: self.r.current_position() }
     }
 
-    fn advance_raw_string(&mut self) -> Span {
-        // Ignore number of # pairs when parsing,
-        // but still count them for error-reporting
-        unimplemented!()
+    fn advance_while_xid_continue(&mut self, start: u32) -> (Token, Span) {
+        let xid_continue_start = self.r.current_position();
+        loop {
+            match self.r.peek() {
+                Some('\'') => {
+                    self.on_error(LexingError::UnexpectedChar, xid_continue_start);
+                    self.r.advance();
+                    return (Token::CharLiteral, Span { start: start, end: self.r.current_position() });
+                }
+                Some(c) if c.is_xid_continue() => self.r.advance(),
+                Some(_) | None => return (Token::Lifetime, Span { start: start, end: self.r.current_position() })
+            }
+        }
+    }
+
+    fn advance_byte_literal_or_lifetime(&mut self) -> (Token, Span) {
+        debug_assert!(self.r.peek() == Some('\''));
+        let start = self.r.current_position();
+        self.r.advance();
+        match self.r.peek() {
+            Some('\\') => (Token::CharLiteral, Span { start: start, end: self.advance_escape_seq() }), // byte mode
+            None => { // I'm tempted to do if ::std::rand::random::<bool>() { Token::Lifetime } else { Token::CharLiteral }
+                let curr_pos = self.r.current_position();
+                self.on_error(LexingError::Eof, curr_pos);
+                return (Token::CharLiteral, Span {start: start, end: curr_pos});
+            },
+            Some(c) if !c.is_xid_continue()  => { // we are char, consume until '
+                self.r.advance();
+                self.advance_until_end_of_string('\'', true);
+                return (Token::CharLiteral, Span {start: start, end: self.r.current_position()})
+            }
+            Some(_) => { // we are <'><XID_CONTINUE>, check the next char
+                self.r.advance();
+                match self.r.peek() {
+                    Some('\'') => (Token::CharLiteral, Span {start: start, end: self.advance_single()}),
+                    _ =>  self.advance_while_xid_continue(start)
+                }
+            }
+        }
+    }
+
+    /*
+     * Reference documentation is incomplete about accepted byte escape sequences
+     * accepted simple esc seq are \n, \r, \t, \\, \', \", \0
+     * new unicode escape seq are \u{0} to \u{10ffff} (any number of digits, no spaces, inclusive range D800 to DFFF is invalid)
+     * Possible errors:
+     * unknown escape seq (eg. '\a'): UnexpectedChar
+     * wrong escape seq (eg. '\u{}'): UnexpectedChar
+     * too long (eg. 'abc'): UnexpectedChar
+     * unterminated seq (spotting whitespace before `'`): UnterminatedLiteral
+     * and eofs
+     */
+    fn advance_escape_seq(&mut self,) -> u32 {
+        debug_assert!(self.r.peek() == Some('\\'));
+        self.r.advance();
+        match self.r.peek() {
+            None => {
+                let curr_pos = self.r.current_position();
+                self.on_error(LexingError::Eof, curr_pos);
+                return curr_pos;
+            },
+            Some(esc_mark) => {
+                match esc_mark {
+                    'n' | 'r' | 't' | '\\' | '\'' | '"' | '0' => self.advance_single(),
+                    _ => unimplemented!()
+                }
+            }
+        }
     }
 
     fn advance_ident(&mut self) -> u32 {
@@ -208,17 +272,17 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
         let token_start = self.r.current_position();
         match curr {
-            '"' => return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true, true))),
-            '\'' => return Some((Token::CharLiteral, self.advance_literal('\'', true, true))),
+            '"' => return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true))),
+            '\'' => return Some(self.advance_byte_literal_or_lifetime()),
             'b' => {
                 self.r.advance();
                 match self.r.peek() {
                     Some('\'') => {
-                        let quoted_span = self.advance_literal('\'', true, false);
+                        let quoted_span = self.advance_literal('\'', false);
                         return Some((Token::ByteLiteral, Span { start: token_start, end: quoted_span.end } ));
                     },
                     Some('"') => {
-                        let quoted_span = self.advance_literal('"', true, false);
+                        let quoted_span = self.advance_literal('"', false);
                         return Some((Token::ByteStringLiteral(LiteralKind::Normal), Span { start: token_start, end: quoted_span.end } ));
                     },
                     Some(_) | None => { }
