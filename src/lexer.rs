@@ -1,6 +1,21 @@
 use super::Span; 
 use super::token::{Token, LiteralKind, BinOpKind};
 
+/*
+ * A word about our error strategy.
+ * Errors thrown during tokenization can be split into two categories:
+ * Syntactical and semantical. Semantical errors are
+ * # InvalidEscapeSeq:
+ *   Raises for syntactically correct escape sequence that covers wrong range.
+ *   For example, \xff raises this error.
+ *   This error could be en UnexpectedChar in most cases, but It's nicer for the user this way.
+ * # IllegalToken:
+ *   Special treatment for 'a'b
+ * They are raised at the start of the token.
+ * All other errors are syntactic
+ */
+
+
 pub trait StringScanner : Send {
     // returns eof: \u0003 at the end of the text
     fn advance(&mut self);
@@ -15,12 +30,12 @@ pub trait StringScanner : Send {
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum LexingError {
-    Eof,
-    UnexpectedChar,
-    IllegalToken,
-    UnterminatedLiteral,
-    NonAsciiByte,
-    InvalidEscapeSeq
+    Eof, // syntax
+    UnexpectedChar, // syntax
+    IllegalToken, // semantics
+    UnterminatedLiteral, // syntax
+    NonAsciiByte, // syntax
+    InvalidEscapeSeq // semantics
 }
 
 pub struct SimpleStringScanner {
@@ -100,7 +115,12 @@ fn is_ascii(c: char) -> bool {
 }
 
 impl<'this, S:StringScanner> Lexer<'this, S> {
-    fn on_error(&mut self, err: LexingError, pos: u32) {
+    fn on_error(&mut self, err: LexingError) {
+        let mut curr_pos = self.r.current_position();
+        self.on_error_at(err, curr_pos)
+    }
+
+    fn on_error_at(&mut self, err: LexingError, pos: u32) {
         if self.err_recovery {
             return;
         }
@@ -135,8 +155,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             let c_opt = self.r.peek();
             match c_opt {
                 None => {
-                    let curr_pos = self.r.current_position();
-                    self.on_error(LexingError::Eof, curr_pos);
+                    self.on_error(LexingError::Eof);
                     break;
                 },
                 Some(x) if x == c_end => {
@@ -149,8 +168,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                             Some('\\') => continue,
                             Some(x) => {
                                 if(!accept_unicode && !is_ascii(x)) {
-                                    let curr_pos = self.r.current_position();
-                                    self.on_error(LexingError::UnexpectedChar, curr_pos);
+                                    self.on_error(LexingError::UnexpectedChar);
                                 }
                                 break;
                             },
@@ -160,8 +178,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 },
                 Some(x) =>{                    
                     if(!accept_unicode && !is_ascii(x)) {
-                        let curr_pos = self.r.current_position();
-                        self.on_error(LexingError::UnexpectedChar, curr_pos);
+                        self.on_error(LexingError::UnexpectedChar);
                     }
                     self.r.advance();
                 }
@@ -176,25 +193,31 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         return Span { start: start, end: self.r.current_position() }
     }
 
-    fn recover_while_looks_like_char(&mut self) -> bool {
+    // returns if looks like a char, false if looks like a lifetime
+    fn error_and_recover_to_char(&mut self, can_be_lifetime: bool) -> bool {
         let xid_continue_start = self.r.current_position();
         loop {
             match self.r.peek() {
                 Some('\'') => {
-                    self.on_error(LexingError::UnexpectedChar, xid_continue_start);
+                    self.on_error_at(LexingError::UnexpectedChar, xid_continue_start);
                     self.r.advance();
                     return true;
                 }
                 Some(c) if c.is_xid_continue() => self.r.advance(),
-                Some(_) | None => return false
+                Some(_) => return false,
+                None => {
+                    if !can_be_lifetime {
+                        self.on_error(LexingError::Eof);
+                    }
+                    return false;
+                }
             }
         }
     }
 
     fn check_unicode(&mut self, c: char) {
         if c > '\x7f' {
-            let curr_pos = self.r.current_position();
-            self.on_error(LexingError::NonAsciiByte, curr_pos);
+            self.on_error(LexingError::NonAsciiByte);
         }
     }
 
@@ -203,11 +226,10 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         let start = self.r.current_position();
         self.r.advance();
         match self.r.peek() {
-            Some('\\') => (Token::CharLiteral, Span { start: start, end: self.advance_escape_seq(unicode) }), // byte mode
+            Some('\\') => (Token::CharLiteral, Span { start: start, end: self.advance_escape_seq(start, unicode) }), // byte mode
             None => { // I'm tempted to do if ::std::rand::random::<bool>() { Token::Lifetime } else { Token::CharLiteral }
-                let curr_pos = self.r.current_position();
-                self.on_error(LexingError::Eof, curr_pos);
-                return (Token::CharLiteral, Span {start: start, end: curr_pos});
+                self.on_error(LexingError::Eof);
+                return (Token::CharLiteral, Span {start: start, end: self.r.current_position()});
             },
             Some(c) if !c.is_xid_continue()  => { // we are char, consume until '
                 self.r.advance();
@@ -219,7 +241,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 match self.r.peek() {
                     Some('\'') => (Token::CharLiteral, Span {start: start, end: self.advance_single()}),
                     _ =>  {
-                        let token = if self.recover_while_looks_like_char() { Token::CharLiteral } else { Token::Lifetime };
+                        let token = if self.error_and_recover_to_char(true) { Token::CharLiteral } else { Token::Lifetime };
                         return (token, Span {start: start, end: self.r.current_position()})
                     } 
                 }
@@ -227,15 +249,66 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn advance_hex_digits(&mut self) -> u32 {
+    // stairs of doom
+    fn advance_hex_digits(&mut self, start: u32) {
         debug_assert!(self.r.peek() == Some('x'));
-        let digits_start = self.r.advance();
+        self.r.advance();
         let mut accum_int = 0;
         match self.r.peek() {
-            Some(c) => {
-                unimplemented!()
+            Some(c1) => {
+                self.r.advance();
+                match c1.to_digit(16) {
+                    Some(first_digit) => {
+                        match self.r.peek() {
+                            Some(c2) => {
+                                self.r.advance();
+                                match c2.to_digit(16) {
+                                    Some(second_digit) => {
+                                        if(self.r.peek() == Some('\'')) {
+                                            self.r.advance();
+                                            if (first_digit * 16) + second_digit > 0x7F {
+                                                self.on_error_at(LexingError::InvalidEscapeSeq, start);
+                                            }
+                                        }
+                                        else {
+                                            if !self.error_and_recover_to_char(false) {
+                                                self.on_error(LexingError::UnterminatedLiteral)
+                                            }
+                                        }
+                                    },
+                                    // second char is not a hex digit
+                                    None => {
+                                        if(c2 == '\'') {
+                                            self.on_error_at(LexingError::InvalidEscapeSeq, start)
+                                        }
+                                        if !self.error_and_recover_to_char(false) {
+                                            self.on_error(LexingError::UnterminatedLiteral)
+                                        }
+                                    }
+                                }
+                            }
+                            // eof
+                            None => {
+                                if !self.error_and_recover_to_char(false) {
+                                    self.on_error(LexingError::UnterminatedLiteral)
+                                }
+                            }
+                        }
+                    },
+                    // first char is not a hex digit
+                    None => {
+                        if !self.error_and_recover_to_char(false) {
+                            self.on_error(LexingError::UnterminatedLiteral)
+                        }
+                    }
+                }
+            },
+            // eof
+            None => {
+                if !self.error_and_recover_to_char(false) {
+                    self.on_error(LexingError::UnterminatedLiteral)
+                }
             }
-            _ => unimplemented!()
         }
     }
 
@@ -250,19 +323,21 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
      * unterminated seq (spotting whitespace before `'`): UnterminatedLiteral
      * and eofs
      */
-    fn advance_escape_seq(&mut self, unicode: bool) -> u32 {
+    fn advance_escape_seq(&mut self, token_start: u32, unicode: bool) -> u32 {
         debug_assert!(self.r.peek() == Some('\\'));
         self.r.advance();
         match self.r.peek() {
             None => {
-                let curr_pos = self.r.current_position();
-                self.on_error(LexingError::Eof, curr_pos);
-                return curr_pos;
+                self.on_error(LexingError::Eof);
+                return self.r.current_position();
             },
             Some(esc_mark) => {
                 match esc_mark {
                     'n' | 'r' | 't' | '\\' | '\'' | '"' | '0' => self.advance_single(),
-                    'x' => self.advance_hex_digits(),
+                    'x' => {
+                        self.advance_hex_digits(token_start);
+                        return self.r.current_position();
+                    }
                     _ => unimplemented!()
                 }
             }
@@ -480,7 +555,7 @@ impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S
         let result = self.lexer.advance_token();
         if self.seen_char { 
             if let Some((Token::Ident, ident_span)) = result {
-                self.lexer.on_error(LexingError::IllegalToken, ident_span.start);
+                self.lexer.on_error_at(LexingError::IllegalToken, ident_span.start);
                 self.lexer.err_recovery = false;
             }
         }
@@ -578,4 +653,19 @@ fn fail_on_non_ascii() {
     assert!(if let Token::ByteStringLiteral(LiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
     assert!(span.end as usize == text.len());
+}
+
+#[test]
+fn hex_eofs() { 
+    let text = ["'\\x", "'\\xf", "'\\xff"];
+    let mut i = ::std::cell::Cell::new(3);
+    for t in text.iter() {
+        let scanner = SimpleStringScanner::new(text[i.get()-3].to_string());
+        let mut lexer = Lexer::new(scanner, Some(box |_, er, idx| {
+            assert!((idx as usize) == i.get());
+            assert!(er == LexingError::Eof);
+        }));
+        lexer.advance_token();
+        i.set(i.get()+1);
+    }
 }

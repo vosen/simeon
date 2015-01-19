@@ -63,7 +63,6 @@ pub enum Token {
     Underscore,
     Lifetime,
     /*
-    Lifetime,
     Interpolated,
     DocComment,
     MatchNt,

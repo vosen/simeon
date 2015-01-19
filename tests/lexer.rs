@@ -51,6 +51,7 @@ mod lexer {
                 }));
                 for t in lexer.scan() {
                     tokens.push((t.0, last_error.get()));
+                    last_error.set(None);
                 }
                 let mut i = 0;
                 $({
@@ -74,11 +75,11 @@ mod lexer {
     lexer_test_errors!(single_single_quote_error("'", [(Token::CharLiteral, Some((LexingError::Eof, 1))) ]));
     lexer_test!(char_too_long("'ab'", [(Token::CharLiteral, (0, 4)) ]));
     lexer_test_errors!(char_too_long_error("'ab'", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 2))) ]));
-    lexer_test_errors!(byte_unicode_escape("b'\\u{0}'", [(Token::ByteLiteral, Some((LexingError::UnexpectedChar, 3))) ]));
-    lexer_test_errors!(byte_non_unicode("b'ą'", [(Token::ByteLiteral, Some((LexingError::NonAsciiByte, 2))) ]));
-    lexer_test_errors!(char_broken_unicode_escape("'\\u{0 }'", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 5))) ]));
-    lexer_test_errors!(char_hex_escape_too_short("'\\x0'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 1))) ]));
+    lexer_test_errors!(byte_unicode_escape("b'\\u{0}'", [(Token::ByteLiteral, Some((LexingError::UnexpectedChar, 3))) ])); // FAIL
+    lexer_test_errors!(byte_non_unicode("b'ą'", [(Token::ByteLiteral, Some((LexingError::NonAsciiByte, 2))) ])); // FAIL
+    lexer_test_errors!(char_broken_unicode_escape("'\\u{0 }'", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 5))) ])); // FAIL
+    lexer_test_errors!(char_hex_escape_too_short("'\\x0'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 0))) ])); // FAIL
     lexer_test_errors!(char_hex_escape_too_long("'\\xfff'", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 5))) ]));
-    lexer_test_errors!(char_hex_escape_too_large("'\\xff'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 1))) ]));
+    lexer_test_errors!(char_hex_escape_too_large("'\\xff'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 0))) ]));
     lexer_test_errors!(char_unterminated("'\\xff ", [(Token::CharLiteral, Some((LexingError::UnterminatedLiteral, 5))), (Token::Whitespace, None)  ]));
 }
