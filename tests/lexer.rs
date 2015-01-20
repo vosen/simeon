@@ -81,5 +81,11 @@ mod lexer {
     lexer_test_errors!(char_hex_escape_too_short("'\\x0'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 0))) ])); // FAIL
     lexer_test_errors!(char_hex_escape_too_long("'\\xfff'", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 5))) ]));
     lexer_test_errors!(char_hex_escape_too_large("'\\xff'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 0))) ]));
+    lexer_test_errors!(char_hex_eof("'\\xff", [(Token::CharLiteral, Some((LexingError::Eof, 5))) ]));
     lexer_test_errors!(char_unterminated("'\\xff ", [(Token::CharLiteral, Some((LexingError::UnterminatedLiteral, 5))), (Token::Whitespace, None)  ]));
+    lexer_test_errors!(char_hex_escape_recover_from_unexpected("'\\xffz ", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 5))), (Token::Whitespace, None)  ]));
+    lexer_test_errors!(char_unicode_unterminated("'\\u{00} ", [(Token::CharLiteral, Some((LexingError::UnterminatedLiteral, 7))), (Token::Whitespace, None)  ]));
+    lexer_test_errors!(char_unicode_unexpected_recovery("'\\u{00}z ", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 7))), (Token::Whitespace, None)  ]));
+    lexer_test!(char_unicode_empty("'\\u{}' ", [ (Token::CharLiteral, (0, 6)), (Token::Whitespace, (6,7)) ]));
+    lexer_test_errors!(char_unicode_empty_error("'\\u{}' ", [(Token::CharLiteral, Some((LexingError::UnexpectedChar, 4))), (Token::Whitespace, None)  ]));
 }

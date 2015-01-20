@@ -221,7 +221,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn advance_byte_literal_or_lifetime(&mut self, unicode: bool) -> (Token, Span) {
+    // If use_byte_mode is on we return ByteLiteral token and dont return Lifetime token
+    fn advance_char_literal_or_lifetime(&mut self, unicode: bool, use_byte_mode: bool) -> (Token, Span) {
         debug_assert!(self.r.peek() == Some('\''));
         let start = self.r.current_position();
         self.r.advance();
@@ -232,6 +233,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 return (Token::CharLiteral, Span {start: start, end: self.r.current_position()});
             },
             Some(c) if !c.is_xid_continue()  => { // we are char, consume until '
+                if !unicode { self.check_unicode(c) };
                 self.r.advance();
                 self.advance_until_end_of_string('\'', true);
                 return (Token::CharLiteral, Span {start: start, end: self.r.current_position()})
@@ -271,9 +273,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                                             }
                                         }
                                         else {
-                                            if !self.error_and_recover_to_char(false) {
-                                                self.on_error(LexingError::UnterminatedLiteral)
-                                            }
+                                            self.on_error(LexingError::UnexpectedChar);
+                                            self.error_and_recover_to_char(false);
                                         }
                                     },
                                     // second char is not a hex digit
@@ -312,10 +313,66 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
+    fn advance_unicode_digits(&mut self, token_start: u32) {
+        let mut back_buffer = [0; 6];
+        match self.r.peek() {
+            None => {
+                self.on_error(LexingError::Eof);
+                return;
+            },
+            Some('{') => self.r.advance(),
+            Some(_) => {
+                self.error_and_recover_to_char(false);
+                return;
+            }
+        }
+        for i in range(0, 6) {
+            match self.r.peek() {
+                Some('}') => break,
+                Some(c) if c.is_digit(16) => {
+                    back_buffer[i] = (c.to_digit(16).unwrap() as u8);
+                }
+                Some(_) => {
+                    self.error_and_recover_to_char(false);
+                    return;
+                }
+                None => {
+                    self.on_error(LexingError::Eof);
+                    return;
+                }
+            }
+        }
+        match self.r.peek() {
+            Some('}') => {
+                self.r.advance();
+                match self.r.peek() {
+                    Some('\'') => {
+                        self.r.advance();
+                        let sum : u64 = (back_buffer[0] << 5) as u64 + (back_buffer[2] << 4) as u64
+                                        + (back_buffer[2] << 3) as u64 + (back_buffer[3] << 2) as u64
+                                        + (back_buffer[4] << 1) as u64 + (back_buffer[5] << 0) as u64;
+                        if sum > 0x10ffffu64 || (sum >= 0xdc00u64 && sum <= 0xdfffu64) {
+                            self.on_error(LexingError::InvalidEscapeSeq);
+                        }
+                    }
+                    Some(_) => {
+                        if! self.error_and_recover_to_char(false) {
+                            self.on_error(LexingError::UnterminatedLiteral)
+                        }
+                    }
+                    None => self.on_error(LexingError::Eof),
+                }
+            },
+            Some(_) => { self.error_and_recover_to_char(false); },
+            None => self.on_error(LexingError::Eof)
+        }
+
+    }
+
     /*
      * Reference documentation is incomplete about accepted byte escape sequences
      * accepted simple esc seq are \n, \r, \t, \\, \', \", \0
-     * new unicode escape seq are \u{0} to \u{10ffff} (any number of digits, no spaces, inclusive range D800 to DFFF is invalid)
+     * new unicode escape seq are \u{0} to \u{10ffff} (one to six digits, no spaces, inclusive range DC00 to DFFF is invalid)
      * Possible errors:
      * unknown escape seq (eg. '\a'): UnexpectedChar
      * wrong escape seq (eg. '\u{}'): UnexpectedChar
@@ -329,19 +386,25 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         match self.r.peek() {
             None => {
                 self.on_error(LexingError::Eof);
-                return self.r.current_position();
             },
             Some(esc_mark) => {
                 match esc_mark {
-                    'n' | 'r' | 't' | '\\' | '\'' | '"' | '0' => self.advance_single(),
-                    'x' => {
-                        self.advance_hex_digits(token_start);
-                        return self.r.current_position();
+                    'n' | 'r' | 't' | '\\' | '\'' | '"' | '0' => { self.advance_single(); },
+                    'x' => { self.advance_hex_digits(token_start); },
+                    'u' => {
+                        if !unicode {
+                            self.on_error(LexingError::UnexpectedChar);
+                        }
+                        self.advance_unicode_digits(token_start);
+                    },
+                    _ => {
+                        self.on_error(LexingError::UnexpectedChar);
+                        self.error_and_recover_to_char(false);
                     }
-                    _ => unimplemented!()
                 }
             }
-        }
+        };
+        return self.r.current_position();
     }
 
     fn advance_ident(&mut self) -> u32 {
@@ -373,14 +436,11 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         let token_start = self.r.current_position();
         match curr {
             '"' => return Some((Token::StringLiteral(LiteralKind::Normal), self.advance_literal('"', true))),
-            '\'' => return Some(self.advance_byte_literal_or_lifetime(true)),
+            '\'' => return Some(self.advance_char_literal_or_lifetime(true, true)),
             'b' => {
                 self.r.advance();
                 match self.r.peek() {
-                    Some('\'') => {
-                        let quoted_span = self.advance_literal('\'', false);
-                        return Some((Token::ByteLiteral, Span { start: token_start, end: quoted_span.end } ));
-                    },
+                    Some('\'') => return Some(self.advance_char_literal_or_lifetime(false, false)),
                     Some('"') => {
                         let quoted_span = self.advance_literal('"', false);
                         return Some((Token::ByteStringLiteral(LiteralKind::Normal), Span { start: token_start, end: quoted_span.end } ));
