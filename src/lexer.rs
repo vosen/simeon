@@ -237,7 +237,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             Some(_) => { // we are <'><XID_CONTINUE>, check the next char
                 self.r.advance();
                 match self.r.peek() {
-                    Some('\'') => Token::CharLiteral,
+                    Some('\'') => self.eat(Token::CharLiteral),
                     _ =>  {
                         if self.error_and_recover_to_char(true) { Token::CharLiteral } else { Token::Lifetime }
                     } 
