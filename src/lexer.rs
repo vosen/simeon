@@ -1,21 +1,6 @@
 use super::Span; 
 use super::token::{Token, LiteralKind, BinOpKind};
 
-/*
- * A word about our error strategy.
- * Errors thrown during tokenization can be split into two categories:
- * Syntactical and semantical. Semantical errors are
- * # InvalidEscapeSeq:
- *   Raises for syntactically correct escape sequence that covers wrong range.
- *   For example, \xff raises this error.
- *   This error could be en UnexpectedChar in most cases, but It's nicer for the user this way.
- * # IllegalToken:
- *   Special treatment for 'a'b
- * They are raised at the start of the token.
- * All other errors are syntactic
- */
-
-
 pub trait StringScanner : Send {
     // returns eof: \u0003 at the end of the text
     fn advance(&mut self);
@@ -30,12 +15,17 @@ pub trait StringScanner : Send {
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum LexingError {
-    Eof, // syntax
-    UnexpectedChar, // syntax
-    IllegalToken, // semantics
-    UnterminatedLiteral, // syntax
-    NonAsciiByte, // syntax
-    InvalidEscapeSeq // semantics
+    Eof, // we were expecting something but the file ended
+    IllegalToken, // special error for 'a'b
+    NonAsciiByte, // special error for bytes with unicode bytes, eg b'ę'
+    InvalidEscapeSeq, // for semantically wrong seqs like '\xff'
+    IllegalValidSeq, // for '\u8' inside byte literals
+    MalformedEscapeSeq, // we started to lex escape seq but it is broken in some syntactic way, eg. '\u{}' or '\x0'
+    TokenTooLong, // for byte literals that exceed our expectations, eg. 'ab'
+    NewlineInsideLiteral, // byte and char literals don't allow newlines inside
+    // Those two errors are going away
+    UnexpectedChar,
+    UnterminatedLiteral,
 }
 
 pub struct SimpleStringScanner {
