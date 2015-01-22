@@ -19,7 +19,7 @@ pub enum LexingError {
     IllegalToken, // special error for 'a'b
     NonAsciiByte, // special error for bytes with unicode bytes, eg b'ę'
     InvalidEscapeSeq, // for semantically wrong seqs like '\xff'
-    IllegalValidSeq, // for '\u8' inside byte literals
+    IllegalEscapeSeq, // for '\u8' inside byte literals
     MalformedEscapeSeq, // we started to lex escape seq but it is broken in some syntactic way, eg. '\u{}' or '\x0'
     TokenTooLong, // for byte literals that exceed our expectations, eg. 'ab'
     NewlineInsideLiteral, // byte and char literals don't allow newlines inside
