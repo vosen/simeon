@@ -1,8 +1,4 @@
-#![allow(dead_code)]
-#![allow(unused_parens)]
 #![allow(unstable)]
-#![feature(box_syntax)]
-
 
 extern crate syntax;
 
