@@ -119,15 +119,11 @@ pub enum Token {
     RightBrace,
     Underscore,
     Lifetime,
-    Keyword(KeywordKind)
-    /*
-    Interpolated,
+    Keyword(KeywordKind),
     DocComment,
-    MatchNt,
-    SubstNt,
-    SpecialVarNt,
-    Whitespace,
     Comment,
-    Shebang,
+    /*
+    IntegerLiteral,
+    FloatLiteral,
     */
 }

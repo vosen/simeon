@@ -417,6 +417,22 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         return Token::Ident;
     }
 
+    fn advance_single_line_comment(&mut self) {
+        debug_assert!(self.r.peek() == Some('/'));
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                Some(c) => {
+                    match c {
+                        '\r' | '\n' | '\u{2028}' | '\u{2029}' => break,
+                        _ => continue,
+                    }
+                }
+                None => break
+            }
+        }
+    }
+
     fn eat(&mut self, t: Token) -> Token {
         self.r.advance();
         t
@@ -543,6 +559,19 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 self.r.advance();
                 match self.r.peek() {
                     Some('=') => self.eat(Token::BinOpEq(BinOpKind::Slash)),
+                    Some('/') => {
+                        self.r.advance();
+                        match self.r.peek() {
+                            Some('/') => {
+                                self.advance_single_line_comment();
+                                Token::DocComment
+                            }
+                            _ =>  {
+                                self.advance_single_line_comment();
+                                Token::Comment
+                            }
+                        }
+                    }
                     _ => Token::BinOp(BinOpKind::Slash)
                 }
             },

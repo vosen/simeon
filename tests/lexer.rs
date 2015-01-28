@@ -49,6 +49,9 @@ mod lexer {
                                                (Token::Keyword(KeywordKind::As), (9, 11)),
                                                (Token::Whitespace, (11, 12)),
                                                (Token::Keyword(KeywordKind::Break), (12, 17))]));
+    lexer_test!(doc_comm_line("///12345\r\noffsetof", [(Token::DocComment, (0, 8)),
+                                                       (Token::Whitespace, (8, 10)),
+                                                       (Token::Keyword(KeywordKind::Offsetof), (10, 18))]));
 
     mod error {
         use simeon::lexer::*;
