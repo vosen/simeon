@@ -19,6 +19,63 @@ pub enum BinOpKind {
 }
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+pub enum KeywordKind {
+    // strict
+    As,
+    Break,
+    Crate,
+    Else,
+    Enum,
+    Extern,
+    False,
+    Fn,
+    For,
+    If,
+    Impl,
+    In,
+    Let,
+    Loop,
+    Match,
+    Mod,
+    Move,
+    Mut,
+    Pub,
+    Ref,
+    Return,
+    Static,
+    Self,
+    Struct,
+    Super,
+    True,
+    Trait,
+    Type,
+    Unsafe,
+    Use,
+    Virtual,
+    While,
+    Continue,
+    Proc,
+    Box,
+    Const,
+    Where,
+    // reserved
+    Alignof,
+    Be,
+    Offsetof,
+    Priv,
+    Pure,
+    Sizeof,
+    Typeof,
+    Unsized,
+    Yield,
+    Do,
+    Abstract,
+    Final,
+    Override,
+    Macro,
+}
+
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum Token {
     Error,
     Whitespace,
@@ -62,6 +119,7 @@ pub enum Token {
     RightBrace,
     Underscore,
     Lifetime,
+    Keyword(KeywordKind)
     /*
     Interpolated,
     DocComment,

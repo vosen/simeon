@@ -1,5 +1,5 @@
 use super::Span; 
-use super::token::{Token, LiteralKind, BinOpKind};
+use super::token::{Token, LiteralKind, BinOpKind, KeywordKind};
 
 pub trait StringScanner : Send {
     // returns eof: \u0003 at the end of the text
@@ -12,6 +12,8 @@ pub trait StringScanner : Send {
         return val;
     }
 }
+
+const MAX_KEYWORD_LENGTH: usize = 8;
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum LexingError {
@@ -103,6 +105,63 @@ fn is_ascii(c: char) -> bool {
     match c {
         '\x00'...'\x7f' => true,
         _ => false
+    }
+}
+
+fn match_keyword(ident: &str) -> Option<KeywordKind> {
+    match ident {
+        "as" => Some(KeywordKind::As),
+        "break" => Some(KeywordKind::Break),
+        "crate" => Some(KeywordKind::Crate),
+        "else" => Some(KeywordKind::Else),
+        "enum" => Some(KeywordKind::Enum),
+        "extern" => Some(KeywordKind::Extern),
+        "false" => Some(KeywordKind::False),
+        "fn" => Some(KeywordKind::Fn),
+        "for" => Some(KeywordKind::For),
+        "if" => Some(KeywordKind::If),
+        "impl" => Some(KeywordKind::Impl),
+        "in" => Some(KeywordKind::In),
+        "let" => Some(KeywordKind::Let),
+        "loop" => Some(KeywordKind::Loop),
+        "match" => Some(KeywordKind::Match),
+        "mod" => Some(KeywordKind::Mod),
+        "move" => Some(KeywordKind::Move),
+        "mut" => Some(KeywordKind::Mut),
+        "pub" => Some(KeywordKind::Pub),
+        "ref" => Some(KeywordKind::Ref),
+        "return" => Some(KeywordKind::Return),
+        "static" => Some(KeywordKind::Static),
+        "self" => Some(KeywordKind::Self),
+        "struct" => Some(KeywordKind::Struct),
+        "super" => Some(KeywordKind::Super),
+        "true" => Some(KeywordKind::True),
+        "trait" => Some(KeywordKind::Trait),
+        "type" => Some(KeywordKind::Type),
+        "unsafe" => Some(KeywordKind::Unsafe),
+        "use" => Some(KeywordKind::Use),
+        "virtual" => Some(KeywordKind::Virtual),
+        "while" => Some(KeywordKind::While),
+        "continue" => Some(KeywordKind::Continue),
+        "proc" => Some(KeywordKind::Proc),
+        "box" => Some(KeywordKind::Box),
+        "const" => Some(KeywordKind::Const),
+        "where" => Some(KeywordKind::Where),
+        "alignof" => Some(KeywordKind::Alignof),
+        "be" => Some(KeywordKind::Be),
+        "offsetof" => Some(KeywordKind::Offsetof),
+        "priv" => Some(KeywordKind::Priv),
+        "pure" => Some(KeywordKind::Pure),
+        "sizeof" => Some(KeywordKind::Sizeof),
+        "typeof" => Some(KeywordKind::Typeof),
+        "unsized" => Some(KeywordKind::Unsized),
+        "yield" => Some(KeywordKind::Yield),
+        "do" => Some(KeywordKind::Do),
+        "abstract" => Some(KeywordKind::Abstract),
+        "final" => Some(KeywordKind::Final),
+        "override" => Some(KeywordKind::Override),
+        "macro" => Some(KeywordKind::Macro),
+        _ => None
     }
 }
 
@@ -336,15 +395,52 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         None
     }
 
-    fn scan_ident(&mut self) -> Token {
+    fn scan_ident_or_keyword_core<F:FnMut(char)>(&mut self, mut f: F) {
         loop {
             match self.r.peek() {
                 Some(x) if !x.is_xid_continue() => break,
                 None => break,
-                _ => { self.r.advance(); }
+                Some(c) => {
+                    f(c);
+                    self.r.advance();
+                }
             }
         }
+    }
+
+    fn scan_ident(&mut self) -> Token {
+        self.scan_ident_or_keyword_core(|_| {});
         Token::Ident
+    }
+
+    // this function can be called after we've eaten single 'b' char,
+    // that's why this weird flag is here
+    fn scan_ident_or_keyword(&mut self, prepend_b: bool) -> Token {
+        let mut back_buffer = [0u8; MAX_KEYWORD_LENGTH]; // all keywords are ASCII
+        let mut length = 0;
+        if prepend_b {
+            back_buffer[0] = b'b';
+            length += 1;
+        }
+        self.scan_ident_or_keyword_core(|c| {
+            if length <= MAX_KEYWORD_LENGTH {
+                if is_ascii(c) {
+                    back_buffer[length] = c as u8;
+                        length += 1;
+                }
+                else {
+                    length = MAX_KEYWORD_LENGTH + 1;
+                }
+            }
+        });
+        if length <= MAX_KEYWORD_LENGTH {
+            let text_slice = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // this is safe because back_buffer contains bytes we've just copied
+            match match_keyword(text_slice) {
+                Some(keyword_kind) => return Token::Keyword(keyword_kind),
+                None => return Token::Ident
+            }
+        }
+        return Token::Ident;
     }
 
     fn eat(&mut self, t: Token) -> Token {
@@ -389,7 +485,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                         self.advance_literal_or_lifetime('"', false, false);
                         Token::ByteStringLiteral(LiteralKind::Normal)
                     },
-                    Some(_) | None => self.scan_ident()
+                    Some(_) | None => self.scan_ident_or_keyword(true)
                 }
             },
             '=' => {
@@ -530,8 +626,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 }
             },
             x if x.is_xid_start() => {
-                self.r.advance();
-                self.scan_ident()
+                self.scan_ident_or_keyword(false)
             },
             _ => unimplemented!()
         };

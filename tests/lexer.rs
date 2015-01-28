@@ -44,6 +44,11 @@ mod lexer {
     lexer_test!(char_too_long("'ab'", [(Token::CharLiteral, (0, 4)) ]));
     lexer_test!(single_lifetime("'ab", [(Token::Lifetime, (0, 3)) ]));
     lexer_test!(lifetime_newline("'ab\n", [(Token::Lifetime, (0, 3)), (Token::Whitespace, (3, 4)) ]));
+    lexer_test!(keywords("continue as break", [(Token::Keyword(KeywordKind::Continue), (0, 8)),
+                                               (Token::Whitespace, (8, 9)),
+                                               (Token::Keyword(KeywordKind::As), (9, 11)),
+                                               (Token::Whitespace, (11, 12)),
+                                               (Token::Keyword(KeywordKind::Break), (12, 17))]));
 
     mod error {
         use simeon::lexer::*;
