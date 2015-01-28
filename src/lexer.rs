@@ -26,9 +26,6 @@ pub enum LexingError {
     TokenTooLong, // for char/byte literals that exceed our expectations, eg. 'ab'
     TokenTooShort, // for char/byte literals that have the form ''
     UnescapedLiteral, // byte and char literals don't allow unescaped ', \t, \n, \r
-    // Those two errors are going away
-    UnexpectedChar,
-    UnterminatedLiteral,
 }
 
 pub struct SimpleStringScanner {
@@ -192,28 +189,6 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             }
         }
         return Token::Whitespace;
-    }
-
-    // returns if looks like a char, false if looks like a lifetime
-    fn error_and_recover_to_char(&mut self, can_be_lifetime: bool) -> bool {
-        let xid_continue_start = self.r.current_position();
-        loop {
-            match self.r.peek() {
-                Some('\'') => {
-                    self.on_error_at(LexingError::UnexpectedChar, xid_continue_start);
-                    self.r.advance();
-                    return true;
-                }
-                Some(c) if c.is_xid_continue() => self.r.advance(),
-                Some(_) => return false,
-                None => {
-                    if !can_be_lifetime {
-                        self.on_error(LexingError::Eof);
-                    }
-                    return false;
-                }
-            }
-        }
     }
 
     fn advance_literal_or_lifetime(&mut self, c_end: char, allow_unicode: bool, mut look_for_lifetime: bool) -> bool {
@@ -386,8 +361,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                         }
                     },
                     _ => {
-                        self.on_error(LexingError::UnexpectedChar);
-                        self.error_and_recover_to_char(false);
+                        return Some((LexingError::MalformedEscapeSeq, self.r.current_position()));
                     }
                 }
             }
