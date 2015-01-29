@@ -52,6 +52,10 @@ mod lexer {
     lexer_test!(doc_comm_line("///12345\r\noffsetof", [(Token::DocComment, (0, 8)),
                                                        (Token::Whitespace, (8, 10)),
                                                        (Token::Keyword(KeywordKind::Offsetof), (10, 18))]));
+    lexer_test!(block_doc_comment("/ /** */", [(Token::BinOp(BinOpKind::Slash), (0, 1)),
+                                                            (Token::Whitespace, (1, 2)),
+                                                            (Token::DocComment, (2, 8))]));
+    lexer_test!(block_comment_nested("/**/**/*/", [(Token::DocComment, (0, 9))]));
 
     mod error {
         use simeon::lexer::*;

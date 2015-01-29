@@ -369,6 +369,58 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         None
     }
 
+    // doc_comment flag is passed to handle the case of /**/
+    fn scan_block_comment(&mut self, doc_comment: bool) -> Token {
+        debug_assert!(self.r.peek() == Some('*'));
+        let mut first_loop = false;
+        let mut depth = 0;
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                Some('/') => {
+                    if doc_comment && first_loop {
+                        return Token::Comment
+                    }
+                    self.r.advance();
+                    match self.r.peek() {
+                        Some('*') => depth += 1,
+                        Some(_) => { },
+                        None => {
+                            self.on_error(LexingError::Eof);
+                            break;
+                        }
+                    }
+                },
+                Some('*') => {
+                    self.r.advance();
+                    match self.r.peek() {
+                        Some('/') => {
+                            if depth == 0 {
+                                self.r.advance();
+                                break;
+                            }
+                            depth -= 1;
+                        } ,
+                        Some(_) => { },
+                        None => {
+                            self.on_error(LexingError::Eof);
+                            break;
+                        }
+                    }
+                },
+                Some(_) => { },
+                None => {
+                    self.on_error(LexingError::Eof);
+                    break;
+                }
+            }
+            if first_loop {
+                first_loop = false;
+            }
+        }
+        if doc_comment { Token::DocComment } else { Token::Comment }
+    }
+
     fn scan_ident_or_keyword_core<F:FnMut(char)>(&mut self, mut f: F) {
         loop {
             match self.r.peek() {
@@ -559,6 +611,13 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 self.r.advance();
                 match self.r.peek() {
                     Some('=') => self.eat(Token::BinOpEq(BinOpKind::Slash)),
+                    Some('*') => {
+                        self.r.advance();
+                        match self.r.peek() {
+                            Some('*') => self.scan_block_comment(true),
+                            _ =>  self.scan_block_comment(false),
+                        }
+                    }
                     Some('/') => {
                         self.r.advance();
                         match self.r.peek() {
