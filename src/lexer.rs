@@ -1,5 +1,6 @@
 use super::Span; 
-use super::token::{Token, LiteralKind, BinOpKind, KeywordKind};
+use super::token::{Token, StringLiteralKind, BinOpKind, KeywordKind, IntegerLiteralKind};
+use std::ascii::AsciiExt;
 
 pub trait StringScanner : Send {
     // returns eof: \u0003 at the end of the text
@@ -14,6 +15,7 @@ pub trait StringScanner : Send {
 }
 
 const MAX_KEYWORD_LENGTH: usize = 8;
+const MAX_INT_SUFFIX_LENGTH: usize = 3;
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum LexingError {
@@ -26,6 +28,8 @@ pub enum LexingError {
     TokenTooLong, // for char/byte literals that exceed our expectations, eg. 'ab'
     TokenTooShort, // for char/byte literals that have the form ''
     UnescapedLiteral, // byte and char literals don't allow unescaped ', \t, \n, \r
+    MalformedLiteral, // for things like `0b ` or `0b9`
+    IllegalSuffix // for illegal integer suffixes: things like `1i16us`
 }
 
 pub struct SimpleStringScanner {
@@ -98,13 +102,6 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
     }
 }
 
-fn is_ascii(c: char) -> bool {
-    match c {
-        '\x00'...'\x7f' => true,
-        _ => false
-    }
-}
-
 fn match_keyword(ident: &str) -> Option<KeywordKind> {
     match ident {
         "as" => Some(KeywordKind::As),
@@ -159,6 +156,17 @@ fn match_keyword(ident: &str) -> Option<KeywordKind> {
         "override" => Some(KeywordKind::Override),
         "macro" => Some(KeywordKind::Macro),
         _ => None
+    }
+}
+
+fn is_valid_int_suffix(ident: &str) -> bool {
+    match ident {
+          "is"  | "us"
+        | "u8"  | "i8"
+        | "u16" | "i16"
+        | "u32" | "i32"
+        | "u64" | "i64" => true,
+        _ => false
     }
 }
 
@@ -240,7 +248,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                             }
                             return false;
                         },
-                        c if !allow_unicode && !is_ascii(c) => {
+                        c if !allow_unicode && !c.is_ascii() => {
                             first_error = first_error.or(Some((LexingError::NonAsciiByte, self.r.current_position())));
                             self.r.advance();
                         },
@@ -450,7 +458,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
         self.scan_ident_or_keyword_core(|c| {
             if length <= MAX_KEYWORD_LENGTH {
-                if is_ascii(c) {
+                if c.is_ascii() {
                     back_buffer[length] = c as u8;
                         length += 1;
                 }
@@ -485,6 +493,60 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
+    fn advance_digits(&mut self, max_digit: char, mut allow_zero_length: bool) {
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                Some(c) if c == '_' || (c >= '0' && c <= '9' && c <= max_digit) || (c >= 'a' && c <= max_digit) => {
+                    if !allow_zero_length {
+                        allow_zero_length = true;
+                    }
+                },
+                _ => {
+                    if !allow_zero_length {
+                        self.on_error(LexingError::MalformedLiteral);
+                        return;
+                    }
+                    break;
+                }
+            }
+        }
+        let suffix_start = self.r.current_position();
+        match self.r.peek() {
+            Some(c) if c.is_xid_continue() => {
+                let mut back_buffer = [0u8; MAX_INT_SUFFIX_LENGTH]; // suffixes are ASCII
+                let mut length = 0;
+                loop {
+                    match self.r.peek() {
+                        Some(c) if c.is_xid_continue() => {
+                            if c.is_ascii() && length < MAX_INT_SUFFIX_LENGTH {
+                                back_buffer[length] = c as u8;
+                            }
+                            else {
+                                length = MAX_INT_SUFFIX_LENGTH + 1;
+                            }
+                        }
+                        _ => {
+                            length += 1;
+                            break;
+                        }
+                    }
+                    self.r.advance();
+                }
+                if length > MAX_INT_SUFFIX_LENGTH {
+                    self.on_error_at(LexingError::IllegalSuffix, suffix_start);
+                }
+                else {
+                    let suffix = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // safe, we've checked earlier that all u8s are ascii
+                    if !is_valid_int_suffix(suffix) {
+                        self.on_error_at(LexingError::IllegalSuffix, suffix_start);
+                    }
+                }
+            },
+            _ => { }
+        }
+    }
+
     fn eat(&mut self, t: Token) -> Token {
         self.r.advance();
         t
@@ -510,7 +572,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         let token = match curr {
             '"' => {
                 self.advance_literal_or_lifetime('"', true, false);
-                Token::StringLiteral(LiteralKind::Normal)
+                Token::StringLiteral(StringLiteralKind::Normal)
             },
             '\'' => {
                 let is_lifetime = self.advance_literal_or_lifetime('\'', true, true);
@@ -525,7 +587,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                     },
                     Some('"') => {
                         self.advance_literal_or_lifetime('"', false, false);
-                        Token::ByteStringLiteral(LiteralKind::Normal)
+                        Token::ByteStringLiteral(StringLiteralKind::Normal)
                     },
                     Some(_) | None => self.scan_ident_or_keyword(true)
                 }
@@ -687,6 +749,37 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                     _ => Token::Underscore
                 }
             },
+            '0' => {
+                self.r.advance();
+                match self.r.peek() {
+                    None => Token::IntegerLiteral(IntegerLiteralKind::Decimal),
+                    Some(c) => {
+                        match c {
+                            'x' => {
+                                self.advance_digits('f', false);
+                                Token::IntegerLiteral(IntegerLiteralKind::Hex)
+                            }
+                            'o' => {
+                                self.advance_digits('7', false);
+                                Token::IntegerLiteral(IntegerLiteralKind::Octal)
+                            },
+                            'b' => {
+                                self.advance_digits('1', false);
+                                Token::IntegerLiteral(IntegerLiteralKind::Binary)
+                            },
+                            '0'...'9' | '_' => {
+                                self.advance_digits('9', false);
+                                Token::IntegerLiteral(IntegerLiteralKind::Decimal)
+                            },
+                            _ => Token::IntegerLiteral(IntegerLiteralKind::Decimal)
+                        }
+                    }
+                }
+            },
+            '1'...'9' => {
+                self.advance_digits('9', true);
+                Token::IntegerLiteral(IntegerLiteralKind::Decimal)
+            },
             x if x.is_xid_start() => {
                 self.scan_ident_or_keyword(false)
             },
@@ -760,7 +853,7 @@ fn lex_string() {
     assert!(span_opt.is_some());
     assert!(lexer.scan_token().is_none());
     let (token, span) = span_opt.unwrap();
-    assert!(if let Token::StringLiteral(LiteralKind::Normal) = token { true } else { false });
+    assert!(if let Token::StringLiteral(StringLiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
     assert!(span.end as usize == text.len());
     assert!(lexer.scan_token().is_none());
@@ -781,7 +874,7 @@ fn fail_on_eof() {
     assert!(error.unwrap() == LexingError::Eof);
     assert!(span_opt.is_some());
     let (token, span) = span_opt.unwrap();
-    assert!(if let Token::StringLiteral(LiteralKind::Normal) = token { true } else { false });
+    assert!(if let Token::StringLiteral(StringLiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
     assert!(span.end as usize == text.len());
 }
@@ -809,7 +902,7 @@ fn fail_on_non_ascii() {
     assert!(err_idx == 3);
     assert!(span_opt.is_some());
     let (token, span) = span_opt.unwrap();
-    assert!(if let Token::ByteStringLiteral(LiteralKind::Normal) = token { true } else { false });
+    assert!(if let Token::ByteStringLiteral(StringLiteralKind::Normal) = token { true } else { false });
     assert!(span.start as usize == 0);
     assert!(span.end as usize == text.len());
 }

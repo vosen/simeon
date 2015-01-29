@@ -1,5 +1,5 @@
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
-pub enum LiteralKind {
+pub enum StringLiteralKind {
     Normal,
     //Raw,
 }
@@ -76,13 +76,21 @@ pub enum KeywordKind {
 }
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+pub enum IntegerLiteralKind {
+    Decimal,
+    Hex,
+    Octal,
+    Binary
+}
+
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum Token {
     Error,
     Whitespace,
     CharLiteral, // evaluates to char
-    StringLiteral(LiteralKind), // evaluates to &str
+    StringLiteral(StringLiteralKind), // evaluates to &str
     ByteLiteral, // evaluates to u8
-    ByteStringLiteral(LiteralKind), // evaluates to &'static [u8]
+    ByteStringLiteral(StringLiteralKind), // evaluates to &'static [u8]
     Ident,
     Eq,
     Lt,
@@ -122,8 +130,8 @@ pub enum Token {
     Keyword(KeywordKind),
     DocComment,
     Comment,
+    IntegerLiteral(IntegerLiteralKind),
     /*
-    IntegerLiteral,
     FloatLiteral,
     */
 }

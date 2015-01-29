@@ -56,6 +56,15 @@ mod lexer {
                                                             (Token::Whitespace, (1, 2)),
                                                             (Token::DocComment, (2, 8))]));
     lexer_test!(block_comment_nested("/**/**/*/", [(Token::DocComment, (0, 9))]));
+    lexer_test!(int_literals_short("0/0", [(Token::IntegerLiteral(IntegerLiteralKind::Decimal), (0, 1)),
+                                           (Token::BinOp(BinOpKind::Slash), (1, 2)),
+                                           (Token::IntegerLiteral(IntegerLiteralKind::Decimal), (2, 3))]));
+    lexer_test!(int_literal_suffixed1("123is", [(Token::IntegerLiteral(IntegerLiteralKind::Decimal), (0, 5))]));
+    lexer_test!(int_literal_suffixed2("123us", [(Token::IntegerLiteral(IntegerLiteralKind::Decimal), (0, 5))]));
+    lexer_test!(int_literal_suffixed3("123_us", [(Token::IntegerLiteral(IntegerLiteralKind::Decimal), (0, 6))]));
+    lexer_test!(int_literal_suffixed4("0xff_u8", [(Token::IntegerLiteral(IntegerLiteralKind::Hex), (0, 7))]));
+    lexer_test!(int_literal_suffixed5("0o70_i16", [(Token::IntegerLiteral(IntegerLiteralKind::Octal), (0, 8))]));
+    lexer_test!(int_literal_suffixed6("0b1111_1111_1001_0000_i32", [(Token::IntegerLiteral(IntegerLiteralKind::Binary), (0, 25))]));
 
     mod error {
         use simeon::lexer::*;
@@ -117,5 +126,7 @@ mod lexer {
                                                             (Token::Whitespace, None),
                                                             (Token::CharLiteral, Some((LexingError::Eof, 4))) ]));
         lexer_test_errors!(char_unescaped_char("'''", [(Token::CharLiteral, Some((LexingError::UnescapedLiteral, 1))) ]));
+        lexer_test_errors!(illegal_int_suffix1("1i16us", [(Token::IntegerLiteral(IntegerLiteralKind::Decimal), Some((LexingError::IllegalSuffix, 1))) ]));
+        lexer_test_errors!(illegal_int_suffix2("1a16us", [(Token::IntegerLiteral(IntegerLiteralKind::Decimal), Some((LexingError::IllegalSuffix, 1))) ]));
     }
 }
