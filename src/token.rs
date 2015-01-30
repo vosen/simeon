@@ -76,11 +76,28 @@ pub enum KeywordKind {
 }
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
-pub enum IntegerLiteralKind {
+pub enum IntegerLiteralBase {
     Decimal,
     Hex,
     Octal,
     Binary
+}
+
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+pub enum IntegerLiteralSuffix {
+    None,
+    Isize, Usize,
+    U8, I8,
+    U16, I16,
+    U32, I32,
+    U64, I64
+}
+
+#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+pub enum FloatLiteralSuffix {
+    None,
+    F32,
+    F64
 }
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
@@ -130,8 +147,6 @@ pub enum Token {
     Keyword(KeywordKind),
     DocComment,
     Comment,
-    IntegerLiteral(IntegerLiteralKind),
-    /*
-    FloatLiteral,
-    */
+    IntegerLiteral(IntegerLiteralBase, IntegerLiteralSuffix),
+    FloatLiteral(FloatLiteralSuffix),
 }

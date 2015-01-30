@@ -1,5 +1,5 @@
 use super::Span; 
-use super::token::{Token, StringLiteralKind, BinOpKind, KeywordKind, IntegerLiteralKind};
+use super::token::{Token, StringLiteralKind, BinOpKind, KeywordKind, IntegerLiteralBase, IntegerLiteralSuffix};
 use std::ascii::AsciiExt;
 
 pub trait StringScanner : Send {
@@ -159,14 +159,19 @@ fn match_keyword(ident: &str) -> Option<KeywordKind> {
     }
 }
 
-fn is_valid_int_suffix(ident: &str) -> bool {
+fn scan_int_suffix(ident: &str) -> IntegerLiteralSuffix {
     match ident {
-          "is"  | "us"
-        | "u8"  | "i8"
-        | "u16" | "i16"
-        | "u32" | "i32"
-        | "u64" | "i64" => true,
-        _ => false
+        "is" => IntegerLiteralSuffix::Isize,
+        "us" => IntegerLiteralSuffix::Usize,
+        "u8" => IntegerLiteralSuffix::U8,
+        "i8" => IntegerLiteralSuffix::I8,
+        "u16" => IntegerLiteralSuffix::U16,
+        "i16" => IntegerLiteralSuffix::I16,
+        "u32" => IntegerLiteralSuffix::U32,
+        "i32" => IntegerLiteralSuffix::I32,
+        "u64" => IntegerLiteralSuffix::U64,
+        "i64" => IntegerLiteralSuffix::I64,
+        _ => IntegerLiteralSuffix::None,
     }
 }
 
@@ -493,19 +498,17 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn advance_digits(&mut self, max_digit: char, mut allow_zero_length: bool) {
+    fn advance_digits(&mut self, max_digit: char, mut allow_zero_length: bool) -> IntegerLiteralSuffix {
         loop {
             self.r.advance();
             match self.r.peek() {
                 Some(c) if c == '_' || (c >= '0' && c <= '9' && c <= max_digit) || (c >= 'a' && c <= max_digit) => {
-                    if !allow_zero_length {
-                        allow_zero_length = true;
-                    }
+                    if !allow_zero_length { allow_zero_length = true }
                 },
                 _ => {
                     if !allow_zero_length {
                         self.on_error(LexingError::MalformedLiteral);
-                        return;
+                        return IntegerLiteralSuffix::None;
                     }
                     break;
                 }
@@ -521,13 +524,13 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                         Some(c) if c.is_xid_continue() => {
                             if c.is_ascii() && length < MAX_INT_SUFFIX_LENGTH {
                                 back_buffer[length] = c as u8;
+                                length += 1;
                             }
                             else {
                                 length = MAX_INT_SUFFIX_LENGTH + 1;
                             }
                         }
                         _ => {
-                            length += 1;
                             break;
                         }
                     }
@@ -535,15 +538,18 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 }
                 if length > MAX_INT_SUFFIX_LENGTH {
                     self.on_error_at(LexingError::IllegalSuffix, suffix_start);
+                    IntegerLiteralSuffix::None
                 }
                 else {
-                    let suffix = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // safe, we've checked earlier that all u8s are ascii
-                    if !is_valid_int_suffix(suffix) {
+                    let suffix_text = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // safe, we've checked earlier that all u8s are ascii
+                    let suffix = scan_int_suffix(suffix_text);
+                    if suffix == IntegerLiteralSuffix::None {
                         self.on_error_at(LexingError::IllegalSuffix, suffix_start);
                     }
+                    suffix
                 }
             },
-            _ => { }
+            _ => IntegerLiteralSuffix::None
         }
     }
 
@@ -752,33 +758,26 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             '0' => {
                 self.r.advance();
                 match self.r.peek() {
-                    None => Token::IntegerLiteral(IntegerLiteralKind::Decimal),
+                    None => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None),
                     Some(c) => {
                         match c {
-                            'x' => {
-                                self.advance_digits('f', false);
-                                Token::IntegerLiteral(IntegerLiteralKind::Hex)
-                            }
+                            'x' => Token::IntegerLiteral(IntegerLiteralBase::Hex, self.advance_digits('f', false)),
                             'o' => {
-                                self.advance_digits('7', false);
-                                Token::IntegerLiteral(IntegerLiteralKind::Octal)
+                                Token::IntegerLiteral(IntegerLiteralBase::Octal, self.advance_digits('7', false))
                             },
                             'b' => {
-                                self.advance_digits('1', false);
-                                Token::IntegerLiteral(IntegerLiteralKind::Binary)
+                                Token::IntegerLiteral(IntegerLiteralBase::Binary, self.advance_digits('1', false))
                             },
                             '0'...'9' | '_' => {
-                                self.advance_digits('9', false);
-                                Token::IntegerLiteral(IntegerLiteralKind::Decimal)
+                                Token::IntegerLiteral(IntegerLiteralBase::Decimal, self.advance_digits('9', false))
                             },
-                            _ => Token::IntegerLiteral(IntegerLiteralKind::Decimal)
+                            _ => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None)
                         }
                     }
                 }
             },
             '1'...'9' => {
-                self.advance_digits('9', true);
-                Token::IntegerLiteral(IntegerLiteralKind::Decimal)
+                Token::IntegerLiteral(IntegerLiteralBase::Decimal, self.advance_digits('9', true))
             },
             x if x.is_xid_start() => {
                 self.scan_ident_or_keyword(false)
