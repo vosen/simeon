@@ -117,7 +117,7 @@ mod lexer {
         lexer_test_errors!(byte_non_unicode("b'ą'", [(Token::ByteLiteral, Some((LexingError::NonAsciiByte, 2))) ]));
         lexer_test_errors!(char_broken_unicode_escape("'\\u{0 }'", [(Token::CharLiteral, Some((LexingError::MalformedEscapeSeq, 5))) ]));
         lexer_test_errors!(char_hex_escape_too_short("'\\x0'", [(Token::CharLiteral, Some((LexingError::MalformedEscapeSeq, 4))) ]));
-        lexer_test_errors!(char_hex_escape_too_long("'\\xfff'", [(Token::CharLiteral, Some((LexingError::TokenTooLong, 0))) ]));
+        lexer_test_errors!(char_hex_escape_too_long("'\\xfFf'", [(Token::CharLiteral, Some((LexingError::TokenTooLong, 0))) ]));
         lexer_test_errors!(char_hex_escape_too_large("'\\xff'", [(Token::CharLiteral, Some((LexingError::InvalidEscapeSeq, 0))) ]));
         lexer_test_errors!(char_hex_eof("'\\xff", [(Token::CharLiteral, Some((LexingError::Eof, 5))) ]));
         lexer_test_errors!(char_unterminated("'\\xff ", [(Token::CharLiteral, Some((LexingError::Eof, 6)))]));

@@ -632,7 +632,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn scan_float_or_int_suffix(&mut self, ident: &str, default: Token) -> Token {
+    fn scan_float_or_int_suffix(&mut self, ident: &str) -> Token {
         match ident {
             "is" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize),
             "us" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize),
