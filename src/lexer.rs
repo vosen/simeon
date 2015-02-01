@@ -1,5 +1,5 @@
 use super::Span; 
-use super::token::{Token, StringLiteralKind, BinOpKind, KeywordKind, IntegerLiteralBase, IntegerLiteralSuffix};
+use super::token::{Token, StringLiteralKind, BinOpKind, KeywordKind, IntegerLiteralBase, IntegerLiteralSuffix, FloatLiteralSuffix};
 use std::ascii::AsciiExt;
 
 pub trait StringScanner : Send {
@@ -93,12 +93,22 @@ pub struct Lexer<'this, S:StringScanner> {
     r: S,
     err_fn: Option<Box<FnMut(&Lexer<S>, LexingError, u32)+'this>>,
     err_recovery: bool, // set to true during first lexing error in a token
+    /*
+     * Lexing float literal tokens require two chars lookahead
+     * eg. when lexing `12...13` we start by entering lexing rule for integer literals
+     * and after consuming the dot we have to abandon it and on the next call to the iterator
+     * restart from this abandoned dot.
+     * We could solve this by forcing StringScanner to provide us with two-tokens lookahead but I
+     * want StringScanner to be as simple as possible (it is implemented by the user)
+     * at the cost of some messiness in the Lexer.
+    */
+    abandoned_char: Option<char>,
 }
 
 // Actual lexing
 impl<'this, S:StringScanner> Lexer<'this, S> {
     pub fn new(scanner: S, err_handler:Option<Box<FnMut(&Lexer<S>, LexingError, u32)+'this>>) -> Lexer<'this, S> {
-        Lexer { r:scanner, err_fn: err_handler, err_recovery: false }
+        Lexer { r:scanner, err_fn: err_handler, err_recovery: false, abandoned_char: None }
     }
 }
 
@@ -498,6 +508,90 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
+    fn advance_simple_decimal_integer(&mut self) {
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                None => break,
+                Some(c) => {
+                    match c {
+                        '0'...'9' | '_' => {  }
+                        _ => break
+                    }
+                }
+            }
+        }
+    }
+
+    fn advance_float_from_dot(&mut self, float_start: u32) -> (Token, u32) {
+                self.r.advance();
+                match self.r.peek() {
+                    None => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
+                    Some(c) => {
+                        match c {
+                            '0'...'9' => {
+                                let suffix = self.advance_float_from_fractional();
+                                return (Token::FloatLiteral(suffix), self.r.current_position());
+                            }
+                            c if c.is_xid_start() || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
+                                self.abandoned_char = Some('.');
+                                return (Token::FloatLiteral(FloatLiteralSuffix::None), float_start);
+                            },
+                            _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
+                        }
+                    }
+                }
+    }
+
+    fn advance_float_from_fractional(&mut self) -> FloatLiteralSuffix {
+        unimplemented!()
+    }
+
+    fn advance_float_from_exponent(&mut self) -> FloatLiteralSuffix {
+        unimplemented!()
+    }
+
+    fn advance_float_suffix(&mut self) -> FloatLiteralSuffix  {
+        unimplemented!()
+    }
+
+    fn scan_float_or_decimal_integer(&mut self) -> (Token, u32) {
+        debug_assert!(
+            self.r.peek() == Some('0')
+            || self.r.peek() == Some('1')
+            || self.r.peek() == Some('2')
+            || self.r.peek() == Some('3')
+            || self.r.peek() == Some('4')
+            || self.r.peek() == Some('5')
+            || self.r.peek() == Some('6')
+            || self.r.peek() == Some('7')
+            || self.r.peek() == Some('8')
+            || self.r.peek() == Some('9')
+        );
+        self.r.advance();
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                Some(c) if c == '_' || (c >= '0' && c <= '9') => continue,
+                Some(c) => break,
+                None => return (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), self.r.current_position()),
+            }
+        }
+        let float_start = self.r.current_position(); // point where decimal literal ended
+        match self.r.peek().unwrap() {
+            '.' => self.advance_float_from_dot(float_start),
+            'e' | 'E' => {
+                let suffix = self.advance_float_from_exponent();
+                return (Token::FloatLiteral(suffix), self.r.current_position());
+            }
+            c if c.is_xid_start() => {
+                let suffix = self.advance_float_suffix();
+                return (Token::FloatLiteral(suffix), self.r.current_position());
+            }
+            _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position())
+        }
+    }
+
     fn advance_digits(&mut self, max_digit: char, mut allow_zero_length: bool) -> IntegerLiteralSuffix {
         loop {
             self.r.advance();
@@ -558,22 +652,31 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         t
     }
 
+    fn peek_abandoned(&mut self) -> Option<char> {
+        if let Some(c) = self.abandoned_char { Some(c) }
+        else { self.r.peek() }
+    }
+
+    fn advance_abandoned(&mut self) {
+        if self.abandoned_char.is_none() { self.abandoned_char = None }
+        else { self.r.advance() }
+    }
+
     fn scan_token(&mut self) -> Option<(Token, Span)> {
         let start = self.r.current_position();
         let result = self.scan_token_inner();
         self.err_recovery = false;
-        let end = self.r.current_position();
-        return result.map(|t| (t, Span { start: start, end: end }));
+        return result.map(|(token, end)| (token, Span { start: start, end: end }));
     }
 
-    fn scan_token_inner(&mut self) -> Option<Token> {
-        let curr = self.r.peek();
+    fn scan_token_inner(&mut self) -> Option<(Token, u32)> {
+        let curr = self.peek_abandoned();
         if curr.is_none() {
             return None;
         }
         let curr = curr.unwrap();
         if curr.is_whitespace() {
-            return Some(self.scan_whitespace());
+            return Some((self.scan_whitespace(), self.r.current_position()));
         }
         let token = match curr {
             '"' => {
@@ -756,6 +859,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 }
             },
             '0' => {
+                let pre_dot_position = self.r.current_position();
                 self.r.advance();
                 match self.r.peek() {
                     None => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None),
@@ -769,22 +873,31 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                                 Token::IntegerLiteral(IntegerLiteralBase::Binary, self.advance_digits('1', false))
                             },
                             '0'...'9' | '_' => {
-                                Token::IntegerLiteral(IntegerLiteralBase::Decimal, self.advance_digits('9', false))
+                                unimplemented!()
                             },
-                            _ => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None)
+                            '.' => {
+                                let (token, pos) = self.advance_float_from_dot(pre_dot_position);
+                                token
+                            },
+                            'e' | 'E' => {
+                                let suffix = self.advance_float_from_exponent();
+                                Token::FloatLiteral(suffix)
+                            },
+                            _ =>Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None)
                         }
                     }
                 }
             },
-            '1'...'9' => {
-                Token::IntegerLiteral(IntegerLiteralBase::Decimal, self.advance_digits('9', true))
+            '1'...'9' => { 
+                let (token,pos) = self.scan_float_or_decimal_integer();
+                token
             },
             x if x.is_xid_start() => {
                 self.scan_ident_or_keyword(false)
             },
             _ => unimplemented!()
         };
-        return Some(token);
+        Some((token, self.r.current_position()))
     }
 
     pub fn scan<'a>(&'a mut self) -> LexerIterator<'a, 'this, S>  {
@@ -797,12 +910,8 @@ pub struct LexerIterator<'this, 'lexer: 'this, S:StringScanner> {
     seen_char: bool
 }
 
-impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S> {
-    type Item = (Token, Span);
-
-    // Most of this code is proper error handling of 'a'b
-    fn next(&mut self) -> Option<(Token, Span)> {
-        let result = self.lexer.scan_token();
+impl<'this, 'lexer, S:StringScanner> LexerIterator<'this, 'lexer, S> {
+    fn raise_error_on_illegal_token(&mut self, result: Option<(Token, Span)>) {
         if self.seen_char { 
             if let Some((Token::Ident, ident_span)) = result {
                 self.lexer.on_error_at(LexingError::IllegalToken, ident_span.start);
@@ -810,9 +919,28 @@ impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S
             }
         }
         match result {
-            Some((Token::CharLiteral, _)) => { self.seen_char = true; },
-            _ => { self.seen_char = false; },
+            Some((Token::CharLiteral, _)) => {
+                self.seen_char = true;
+            },
+            _ => {
+                self.seen_char = false;
+            },
         }
+    }
+
+    fn drop_state(&mut self) {
+        self.lexer.abandoned_char = None;
+    }
+}
+
+impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S> {
+    type Item = (Token, Span);
+
+    // Most of this code is proper error handling of 'a'b
+    fn next(&mut self) -> Option<(Token, Span)> {
+        let result = self.lexer.scan_token();
+        self.raise_error_on_illegal_token(result);
+        if result.is_none() { self.drop_state() };
         return result;
     }
 }

@@ -65,10 +65,10 @@ mod lexer {
     lexer_test!(int_literal_suffixed4("0xff_u8", [(Token::IntegerLiteral(IntegerLiteralBase::Hex, IntegerLiteralSuffix::U8), (0, 7))]));
     lexer_test!(int_literal_suffixed5("0o70_i16", [(Token::IntegerLiteral(IntegerLiteralBase::Octal, IntegerLiteralSuffix::I16), (0, 8))]));
     lexer_test!(int_literal_suffixed6("0b1111_1111_1001_0000_i32", [(Token::IntegerLiteral(IntegerLiteralBase::Binary, IntegerLiteralSuffix::I32), (0, 25))]));
-    lexer_test!(float_literal1("123.0f64", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 8))]));
-    lexer_test!(float_literal2("0.1f64", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 6))]));
-    lexer_test!(float_literal4("0.1f32", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 6))]));
-    lexer_test!(float_literal3("12E+99_f64", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 10))]));
+    lexer_test!(float_literal1("123.0f64", [(Token::FloatLiteral(FloatLiteralSuffix::F64), (0, 8))]));
+    lexer_test!(float_literal2("0.1f64", [(Token::FloatLiteral(FloatLiteralSuffix::F64), (0, 6))]));
+    lexer_test!(float_literal4("0.1f32", [(Token::FloatLiteral(FloatLiteralSuffix::F32), (0, 6))]));
+    lexer_test!(float_literal3("12E+99_f64", [(Token::FloatLiteral(FloatLiteralSuffix::F64), (0, 10))]));
     lexer_test!(float_literal5("2.", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 2))]));
 
     mod error {
