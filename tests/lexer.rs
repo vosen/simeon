@@ -134,5 +134,7 @@ mod lexer {
         lexer_test_errors!(char_unescaped_char("'''", [(Token::CharLiteral, Some((LexingError::UnescapedLiteral, 1))) ]));
         lexer_test_errors!(illegal_int_suffix1("1i16us", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
         lexer_test_errors!(illegal_int_suffix2("1a16us", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
+        lexer_test_errors!(mismatched_int_suffix("0b1f64", [(Token::IntegerLiteral(IntegerLiteralBase::Binary, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 3))) ]));
+        lexer_test_errors!(mismatched_float_suffix("0.1u32", [(Token::FloatLiteral(FloatLiteralSuffix::None), Some((LexingError::IllegalSuffix, 3))) ]));
     }
 }

@@ -170,40 +170,6 @@ fn match_keyword(ident: &str) -> Option<KeywordKind> {
     }
 }
 
-fn scan_int_suffix(ident: &str) -> IntegerLiteralSuffix {
-    match ident {
-        "is" => IntegerLiteralSuffix::Isize,
-        "us" => IntegerLiteralSuffix::Usize,
-        "u8" => IntegerLiteralSuffix::U8,
-        "i8" => IntegerLiteralSuffix::I8,
-        "u16" => IntegerLiteralSuffix::U16,
-        "i16" => IntegerLiteralSuffix::I16,
-        "u32" => IntegerLiteralSuffix::U32,
-        "i32" => IntegerLiteralSuffix::I32,
-        "u64" => IntegerLiteralSuffix::U64,
-        "i64" => IntegerLiteralSuffix::I64,
-        _ => IntegerLiteralSuffix::None,
-    }
-}
-
-fn scan_float_or_int_suffix(ident: &str) -> Token {
-    match ident {
-        "is" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize),
-        "us" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize),
-        "u8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U8),
-        "i8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I8),
-        "u16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U16),
-        "i16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I16),
-        "u32" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U32),
-        "i32" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I32),
-        "u64" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U64),
-        "i64" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I64),
-        "f32" => Token::FloatLiteral(FloatLiteralSuffix::F32),
-        "f64" => Token::FloatLiteral(FloatLiteralSuffix::F64),
-        _ => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None),
-    }
-}
-
 fn can_be_token_start(c: char) -> bool {
     match c {
         c if c.is_whitespace() => true,
@@ -545,27 +511,55 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
     }
 
     fn advance_float_from_dot(&mut self, float_start: u32) -> (Token, u32) {
-                self.r.advance();
-                match self.r.peek() {
-                    None => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
-                    Some(c) => {
-                        match c {
-                            '0'...'9' => {
-                                let suffix = self.advance_float_from_fractional();
-                                return (Token::FloatLiteral(suffix), self.r.current_position());
-                            }
-                            c if c.is_xid_start() || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
-                                self.abandoned_char = Some('.');
-                                return (Token::FloatLiteral(FloatLiteralSuffix::None), float_start);
-                            },
-                            _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
-                        }
+        self.r.advance();
+        match self.r.peek() {
+            None => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
+            Some(c) => {
+                match c {
+                    '0'...'9' => {
+                        let suffix = self.advance_float_from_fractional();
+                        return (Token::FloatLiteral(suffix), self.r.current_position());
                     }
+                    c if c.is_xid_start() || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
+                        self.abandoned_char = Some('.');
+                        return (Token::FloatLiteral(FloatLiteralSuffix::None), float_start);
+                    },
+                    _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
                 }
+            }
+        }
     }
 
     fn advance_float_from_fractional(&mut self) -> FloatLiteralSuffix {
-        unimplemented!()
+        debug_assert!(
+            self.r.peek() == Some('0')
+            || self.r.peek() == Some('1')
+            || self.r.peek() == Some('2')
+            || self.r.peek() == Some('3')
+            || self.r.peek() == Some('4')
+            || self.r.peek() == Some('5')
+            || self.r.peek() == Some('6')
+            || self.r.peek() == Some('7')
+            || self.r.peek() == Some('8')
+            || self.r.peek() == Some('9')
+        );
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                None => return FloatLiteralSuffix::None,
+                Some(c) => { 
+                    match c {
+                        '0'...'9' | '_' => { },
+                        _ => break
+                    }
+                }
+            }
+        }
+        match self.r.peek().unwrap() {
+            'e' | 'E' => self.advance_float_from_exponent(),
+            c if c.is_xid_continue() => self.advance_float_suffix(),
+            _ => return FloatLiteralSuffix::None,
+        }
     }
 
     fn advance_float_from_exponent(&mut self) -> FloatLiteralSuffix {
@@ -586,6 +580,10 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             if first { first = false };
             self.r.advance();
         }
+        self.advance_float_suffix()
+    }
+
+    fn advance_float_suffix(&mut self) -> FloatLiteralSuffix {
         let suffix_start = self.r.current_position();
         let token = self.advance_float_or_decimal_suffix(suffix_start);
         if let Token::FloatLiteral(suffix) = token {
@@ -630,7 +628,29 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
         else {
             let suffix_text = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // safe, we've checked earlier that all u8s are ascii
-            scan_float_or_int_suffix(suffix_text)
+            self.scan_float_or_int_suffix(suffix_text)
+        }
+    }
+
+    fn scan_float_or_int_suffix(&mut self, ident: &str, default: Token) -> Token {
+        match ident {
+            "is" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize),
+            "us" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize),
+            "u8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U8),
+            "i8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I8),
+            "u16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U16),
+            "i16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I16),
+            "u32" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U32),
+            "i32" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I32),
+            "u64" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U64),
+            "i64" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I64),
+            "f32" => Token::FloatLiteral(FloatLiteralSuffix::F32),
+            "f64" => Token::FloatLiteral(FloatLiteralSuffix::F64),
+            "" => panic!(),
+            _ => {
+                self.on_error(LexingError::IllegalSuffix);
+                Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None)
+            }
         }
     }
 
@@ -688,39 +708,15 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
         let suffix_start = self.r.current_position();
         match self.r.peek() {
-            Some(c) if c.is_xid_continue() => {
-                let mut back_buffer = [0u8; MAX_INT_SUFFIX_LENGTH]; // suffixes are ASCII
-                let mut length = 0;
-                loop {
-                    match self.r.peek() {
-                        Some(c) if c.is_xid_continue() => {
-                            if c.is_ascii() && length < MAX_INT_SUFFIX_LENGTH {
-                                back_buffer[length] = c as u8;
-                                length += 1;
-                            }
-                            else {
-                                length = MAX_INT_SUFFIX_LENGTH + 1;
-                            }
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                    self.r.advance();
+            Some(c) if c.is_xid_start() =>{
+                if let Token::IntegerLiteral(_, suffix) = self.advance_float_or_decimal_suffix(suffix_start) {
+                    suffix
                 }
-                if length > MAX_INT_SUFFIX_LENGTH {
+                else {
                     self.on_error_at(LexingError::IllegalSuffix, suffix_start);
                     IntegerLiteralSuffix::None
                 }
-                else {
-                    let suffix_text = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // safe, we've checked earlier that all u8s are ascii
-                    let suffix = scan_int_suffix(suffix_text);
-                    if suffix == IntegerLiteralSuffix::None {
-                        self.on_error_at(LexingError::IllegalSuffix, suffix_start);
-                    }
-                    suffix
-                }
-            },
+            }
             _ => IntegerLiteralSuffix::None
         }
     }
