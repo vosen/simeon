@@ -204,6 +204,23 @@ fn scan_float_or_int_suffix(ident: &str) -> Token {
     }
 }
 
+fn can_be_token_start(c: char) -> bool {
+    match c {
+        c if c.is_whitespace() => true,
+        '"' | '\'' | 'b' | '='
+        | '<' | '>' | '&' | '|'
+        | '!' | '~' | '+' | '-'
+        | '*' | '/' | '%' | '^'
+        | '@' | '.' | ',' | ';'
+        | ':' | '#' | '$' | '?'
+        | '(' | '[' | '{' | ')'
+        | ']' | '}' | '_' => true,
+        '0'...'9' => true,
+        c if c.is_xid_start() => true,
+        _ => false
+    }
+}
+
 impl<'this, S:StringScanner> Lexer<'this, S> {
     fn on_error(&mut self, err: LexingError) {
         let curr_pos = self.r.current_position();
@@ -933,9 +950,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                             'b' => {
                                 Token::IntegerLiteral(IntegerLiteralBase::Binary, self.advance_digits('1', false))
                             },
-                            '0'...'9' | '_' => {
-                                unimplemented!()
-                            },
+                            '0'...'9' | '_' => return Some(self.scan_float_or_decimal_integer()),
                             '.' => return Some(self.advance_float_from_dot(pre_dot_position)),
                             'e' | 'E' => {
                                 let suffix = self.advance_float_from_exponent();
@@ -950,7 +965,17 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             x if x.is_xid_start() => {
                 self.scan_ident_or_keyword(false)
             },
-            _ => unimplemented!()
+            _ => {
+                loop {
+                    self.r.advance();
+                    match self.r.peek() {
+                        None => break,
+                        Some(c) if can_be_token_start(c) => break,
+                        _ => { }
+                    }
+                 }
+                 Token::UnexpectedSequence
+            }
         };
         Some((token, self.r.current_position()))
     }

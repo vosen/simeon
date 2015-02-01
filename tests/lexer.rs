@@ -69,7 +69,8 @@ mod lexer {
     lexer_test!(float_literal2("0.1f64", [(Token::FloatLiteral(FloatLiteralSuffix::F64), (0, 6))]));
     lexer_test!(float_literal4("0.1f32", [(Token::FloatLiteral(FloatLiteralSuffix::F32), (0, 6))]));
     lexer_test!(float_literal3("12E+99_f64", [(Token::FloatLiteral(FloatLiteralSuffix::F64), (0, 10))]));
-    lexer_test!(float_literal5("2.", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 2))]));
+    lexer_test!(float_literal5("002.", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 4))]));
+    lexer_test!(illegal_token("``` ", [(Token::UnexpectedSequence, (0, 3)), (Token::Whitespace, (3, 4)) ]));
 
     mod error {
         use simeon::lexer::*;

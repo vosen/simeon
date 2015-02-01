@@ -102,8 +102,10 @@ pub enum FloatLiteralSuffix {
 
 #[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
 pub enum Token {
-    Error,
+    UnexpectedSequence,
     Whitespace,
+    DocComment,
+    Comment,
     CharLiteral, // evaluates to char
     StringLiteral(StringLiteralKind), // evaluates to &str
     ByteLiteral, // evaluates to u8
@@ -145,8 +147,6 @@ pub enum Token {
     Underscore,
     Lifetime,
     Keyword(KeywordKind),
-    DocComment,
-    Comment,
     IntegerLiteral(IntegerLiteralBase, IntegerLiteralSuffix),
     FloatLiteral(FloatLiteralSuffix),
 }
