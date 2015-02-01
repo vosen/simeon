@@ -29,7 +29,8 @@ pub enum LexingError {
     TokenTooShort, // for char/byte literals that have the form ''
     UnescapedLiteral, // byte and char literals don't allow unescaped ', \t, \n, \r
     MalformedLiteral, // for things like `0b ` or `0b9`
-    IllegalSuffix // for illegal integer suffixes: things like `1i16us`
+    IllegalSuffix, // for illegal integer suffixes: things like `1i16us`
+    MalformedExponent // for broken exponent in floats: eg. `12e` or `12E!1`
 }
 
 pub struct SimpleStringScanner {
@@ -526,21 +527,6 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         }
     }
 
-    fn advance_simple_decimal_integer(&mut self) {
-        loop {
-            self.r.advance();
-            match self.r.peek() {
-                None => break,
-                Some(c) => {
-                    match c {
-                        '0'...'9' | '_' => {  }
-                        _ => break
-                    }
-                }
-            }
-        }
-    }
-
     fn advance_float_from_dot(&mut self, float_start: u32) -> (Token, u32) {
                 self.r.advance();
                 match self.r.peek() {
@@ -566,12 +552,37 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
     }
 
     fn advance_float_from_exponent(&mut self) -> FloatLiteralSuffix {
-        unimplemented!()
+        debug_assert!(self.r.peek() == Some('e') || self.r.peek() == Some('E'));
+        self.r.advance();
+        match self.r.peek() {
+            Some(c) if c == '-' || c == '+' => self.r.advance(),
+            None => self.on_error(LexingError::MalformedExponent),
+            _ => {}
+        }
+        let mut first = true;
+        loop {
+            match self.r.peek() {
+                Some(c) if (c >= '0' && c <= '9') || (!first && c == '_') => { },
+                Some(c) if c.is_xid_start() => break,
+                _ => return FloatLiteralSuffix::None,
+            }
+            if first { first = false };
+            self.r.advance();
+        }
+        let suffix_start = self.r.current_position();
+        let token = self.advance_float_or_decimal_suffix(suffix_start);
+        if let Token::FloatLiteral(suffix) = token {
+            suffix
+        }
+        else {
+            self.on_error_at(LexingError::IllegalSuffix, suffix_start);
+            FloatLiteralSuffix::None
+        }
     }
 
     // no dot encountered, check suffix to disambiguate between int and float tokens
     fn advance_float_or_decimal_suffix(&mut self, suffix_start: u32) -> Token {
-        debug_assert!(self.r.peek().unwrap().is_xid_start());        
+        debug_assert!(self.r.peek().unwrap().is_xid_start());
         let mut length = 1;
         let mut back_buffer = [0u8; MAX_INT_SUFFIX_LENGTH]; // suffixes are ASCII
         {
@@ -623,7 +634,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             self.r.advance();
             match self.r.peek() {
                 Some(c) if c == '_' || (c >= '0' && c <= '9') => continue,
-                Some(c) => break,
+                Some(_) => break,
                 None => return (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), self.r.current_position()),
             }
         }
@@ -633,7 +644,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             'e' | 'E' => {
                 let suffix = self.advance_float_from_exponent();
                 return (Token::FloatLiteral(suffix), self.r.current_position());
-            }
+            },
             c if c.is_xid_start() => {
                 let token = self.advance_float_or_decimal_suffix(float_start);
                 return (token, self.r.current_position());
@@ -871,7 +882,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             },
             '@' => self.eat(Token::At),
             '.' => {
-                self.r.advance();
+                self.advance_abandoned();
                 match self.r.peek() {
                     Some('.') => {
                         self.r.advance();
@@ -925,10 +936,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                             '0'...'9' | '_' => {
                                 unimplemented!()
                             },
-                            '.' => {
-                                let (token, pos) = self.advance_float_from_dot(pre_dot_position);
-                                token
-                            },
+                            '.' => return Some(self.advance_float_from_dot(pre_dot_position)),
                             'e' | 'E' => {
                                 let suffix = self.advance_float_from_exponent();
                                 Token::FloatLiteral(suffix)
@@ -938,10 +946,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                     }
                 }
             },
-            '1'...'9' => { 
-                let (token,pos) = self.scan_float_or_decimal_integer();
-                token
-            },
+            '1'...'9' => return Some(self.scan_float_or_decimal_integer()),
             x if x.is_xid_start() => {
                 self.scan_ident_or_keyword(false)
             },
