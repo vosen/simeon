@@ -185,6 +185,24 @@ fn scan_int_suffix(ident: &str) -> IntegerLiteralSuffix {
     }
 }
 
+fn scan_float_or_int_suffix(ident: &str) -> Token {
+    match ident {
+        "is" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize),
+        "us" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize),
+        "u8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U8),
+        "i8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I8),
+        "u16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U16),
+        "i16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I16),
+        "u32" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U32),
+        "i32" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I32),
+        "u64" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U64),
+        "i64" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I64),
+        "f32" => Token::FloatLiteral(FloatLiteralSuffix::F32),
+        "f64" => Token::FloatLiteral(FloatLiteralSuffix::F64),
+        _ => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None),
+    }
+}
+
 impl<'this, S:StringScanner> Lexer<'this, S> {
     fn on_error(&mut self, err: LexingError) {
         let curr_pos = self.r.current_position();
@@ -551,8 +569,41 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         unimplemented!()
     }
 
-    fn advance_float_suffix(&mut self) -> FloatLiteralSuffix  {
-        unimplemented!()
+    // no dot encountered, check suffix to disambiguate between int and float tokens
+    fn advance_float_or_decimal_suffix(&mut self, suffix_start: u32) -> Token {
+        debug_assert!(self.r.peek().unwrap().is_xid_start());        
+        let mut length = 1;
+        let mut back_buffer = [0u8; MAX_INT_SUFFIX_LENGTH]; // suffixes are ASCII
+        {
+            let c = self.r.peek().unwrap();
+            if !c.is_ascii() { length = MAX_INT_SUFFIX_LENGTH + 1; }
+            else { back_buffer[0] = c as u8; }
+        }
+        loop {
+            self.r.advance();
+            match self.r.peek() {
+                Some(c) if c.is_xid_continue() => {
+                    if c.is_ascii() && length < MAX_INT_SUFFIX_LENGTH {
+                        back_buffer[length] = c as u8;
+                        length += 1;
+                    }
+                    else {
+                        length = MAX_INT_SUFFIX_LENGTH + 1;
+                    }
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        if length > MAX_INT_SUFFIX_LENGTH {
+            self.on_error_at(LexingError::IllegalSuffix, suffix_start);
+            Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None)
+        }
+        else {
+            let suffix_text = unsafe { ::std::str::from_utf8_unchecked(&back_buffer[0..length]) }; // safe, we've checked earlier that all u8s are ascii
+            scan_float_or_int_suffix(suffix_text)
+        }
     }
 
     fn scan_float_or_decimal_integer(&mut self) -> (Token, u32) {
@@ -568,7 +619,6 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
             || self.r.peek() == Some('8')
             || self.r.peek() == Some('9')
         );
-        self.r.advance();
         loop {
             self.r.advance();
             match self.r.peek() {
@@ -585,8 +635,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 return (Token::FloatLiteral(suffix), self.r.current_position());
             }
             c if c.is_xid_start() => {
-                let suffix = self.advance_float_suffix();
-                return (Token::FloatLiteral(suffix), self.r.current_position());
+                let token = self.advance_float_or_decimal_suffix(float_start);
+                return (token, self.r.current_position());
             }
             _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position())
         }
