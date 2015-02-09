@@ -1,12 +1,12 @@
-#![allow(unstable)]
 #![feature(box_syntax)]
+#![feature(core)]
 
 extern crate simeon;
 
 #[cfg(test)]
 mod lexer {
     use simeon::lexer::*;
-    use simeon::token::*;
+    use simeon::lexer::token::*;
 
     macro_rules! lexer_test{
         ($name: ident ( $text: expr, [$($tokens: pat),+ ]) ) => (
@@ -74,7 +74,7 @@ mod lexer {
 
     mod error {
         use simeon::lexer::*;
-        use simeon::token::*;
+        use simeon::lexer::token::*;
 
         macro_rules! lexer_test_errors {
             ($name: ident ( $text: expr, [$($tokens: pat),+ ]) ) => (
@@ -84,7 +84,7 @@ mod lexer {
                     let scanner = SimpleStringScanner::new(text.to_string());
                     let mut tokens = Vec::new();
                     let last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
-                    let mut lexer = Lexer::new(scanner, Some(box |&mut: _, er, idx| {
+                    let mut lexer = Lexer::new(scanner, Some(box |_, er, idx| {
                         if let Some(err_unwrapped) = last_error.get() {
                             panic!("raised more than one error for a token. old: {:?}, new: {:?}", err_unwrapped, (er,idx));
                         }

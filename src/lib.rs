@@ -1,6 +1,12 @@
-#![allow(unstable)]
+#![feature(unsafe_destructor)]
+#![feature(concat_idents)]
+#![feature(core)]
+#![feature(std_misc)]
+#![feature(unicode)]
+#![feature(hash)]
+#![feature(collections)]
 
-extern crate syntax;
+extern crate core;
 
 /*
  * Rust's lexical grammar is not unambiguous.
@@ -12,9 +18,10 @@ extern crate syntax;
  * That's why we go with the second choice (and raise IllegalToken).
  */
 pub mod lexer;
-pub mod token;
+pub mod parser;
+pub mod ptr;
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub struct Span {   
     pub start: u32,
     pub end: u32,

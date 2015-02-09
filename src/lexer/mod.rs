@@ -1,6 +1,8 @@
 use super::Span; 
-use super::token::{Token, StringLiteralKind, BinOpKind, KeywordKind, IntegerLiteralBase, IntegerLiteralSuffix, FloatLiteralSuffix};
 use std::ascii::AsciiExt;
+use self::token::*;
+
+pub mod token;
 
 pub trait StringScanner : Send {
     // returns eof: \u0003 at the end of the text
@@ -17,9 +19,9 @@ pub trait StringScanner : Send {
 const MAX_KEYWORD_LENGTH: usize = 8;
 const MAX_INT_SUFFIX_LENGTH: usize = 3;
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum LexingError {
-    Eof, // we were expecting something but the file ended
+    Eof, /// we were expecting something but the file ended
     IllegalToken, // special error for 'a'b
     NonAsciiByte, // special error for bytes with unicode bytes, eg b'ę'
     InvalidEscapeSeq, // for semantically wrong seqs like '\xff'
@@ -1090,7 +1092,7 @@ fn fail_on_non_ascii() {
     let mut err_idx = 0;
     let mut err_count = 0i32;
     let span_opt = {
-        let mut lexer = Lexer::new(scanner, Some(Box::new(|&mut: _, er, idx| {
+        let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
             error = Some(er);
             err_idx = idx;
             err_count += 1;

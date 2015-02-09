@@ -1,10 +1,10 @@
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum StringLiteralKind {
     Normal,
     //Raw,
 }
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum BinOpKind {
     Plus,
     Minus,
@@ -18,7 +18,7 @@ pub enum BinOpKind {
     Shr,
 }
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum KeywordKind {
     // strict
     As,
@@ -75,7 +75,7 @@ pub enum KeywordKind {
     Macro,
 }
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum IntegerLiteralBase {
     Decimal,
     Hex,
@@ -83,7 +83,7 @@ pub enum IntegerLiteralBase {
     Binary
 }
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum IntegerLiteralSuffix {
     None,
     Isize, Usize,
@@ -93,14 +93,14 @@ pub enum IntegerLiteralSuffix {
     U64, I64
 }
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum FloatLiteralSuffix {
     None,
     F32,
     F64
 }
 
-#[derive(PartialEq, Eq, Copy, Show, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum Token {
     UnexpectedSequence,
     Whitespace,
