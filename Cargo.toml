@@ -1,5 +1,18 @@
 [package]
-
 name = "simeon"
 version = "0.0.1"
 authors = ["Andrzej Janik <vosen@vosen.pl>"]
+build = "build.rs"
+
+[profile.dev]
+opt-level = 0
+debug = true
+lto = false
+
+[profile.test]
+opt-level = 0
+debug = true
+lto = false
+
+[build-dependencies]
+gcc = "0.2.1"
