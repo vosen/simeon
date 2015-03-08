@@ -5,8 +5,11 @@
 #![feature(unicode)]
 #![feature(hash)]
 #![feature(collections)]
+#![feature(unsafe_no_drop_flag)]
+#![feature(libc)]
 
 extern crate core;
+extern crate libc;
 
 /*
  * Rust's lexical grammar is not unambiguous.
@@ -21,6 +24,7 @@ pub mod lexer;
 pub mod parser;
 pub mod ptr;
 
+#[repr(C)]
 #[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub struct Span {   
     pub start: u32,

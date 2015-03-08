@@ -17,7 +17,7 @@ pub trait StringScanner : Send {
 }
 
 const MAX_KEYWORD_LENGTH: usize = 8;
-const MAX_INT_SUFFIX_LENGTH: usize = 3;
+const MAX_INT_SUFFIX_LENGTH: usize = 5;
 
 #[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum LexingError {
@@ -31,7 +31,7 @@ pub enum LexingError {
     TokenTooShort, // for char/byte literals that have the form ''
     UnescapedLiteral, // byte and char literals don't allow unescaped ', \t, \n, \r
     MalformedLiteral, // for things like `0b ` or `0b9`
-    IllegalSuffix, // for illegal integer suffixes: things like `1i16us`
+    IllegalSuffix, // for illegal integer suffixes: things like `1i16usize`
     MalformedExponent // for broken exponent in floats: eg. `12e` or `12E!1`
 }
 
@@ -92,9 +92,9 @@ impl StringScanner for SimpleStringScanner {
         self.idx
     }
 }
-pub struct Lexer<'this, S:StringScanner> {
+pub struct Lexer<'a, S:StringScanner> {
     r: S,
-    err_fn: Option<Box<FnMut(&Lexer<S>, LexingError, u32)+'this>>,
+    err_fn: Option<Box<for<'b> FnMut(&'b Lexer<S>, LexingError, u32)+'a>>,
     err_recovery: bool, // set to true during first lexing error in a token
     /*
      * Lexing float literal tokens require two chars lookahead
@@ -109,9 +109,13 @@ pub struct Lexer<'this, S:StringScanner> {
 }
 
 // Actual lexing
-impl<'this, S:StringScanner> Lexer<'this, S> {
-    pub fn new(scanner: S, err_handler:Option<Box<FnMut(&Lexer<S>, LexingError, u32)+'this>>) -> Lexer<'this, S> {
+impl<'a, S:StringScanner> Lexer<'a, S> {
+    pub fn new(scanner: S, err_handler:Option<Box<FnMut(&Lexer<S>, LexingError, u32)+'a>>) -> Lexer<'a, S> {
         Lexer { r:scanner, err_fn: err_handler, err_recovery: false, abandoned_char: None }
+    }
+
+    pub fn scanner(&self) -> &S {
+        &self.r
     }
 }
 
@@ -190,7 +194,7 @@ fn can_be_token_start(c: char) -> bool {
     }
 }
 
-impl<'this, S:StringScanner> Lexer<'this, S> {
+impl<'a, S:StringScanner> Lexer<'a, S> {
     fn on_error(&mut self, err: LexingError) {
         let curr_pos = self.r.current_position();
         self.on_error_at(err, curr_pos)
@@ -224,7 +228,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         let start = self.r.current_position();
         self.r.advance();
         let mut first_error = None;
-        let mut length = 0us;
+        let mut length = 0usize;
         loop {
             match self.r.peek() {
                 None => {
@@ -637,8 +641,8 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
 
     fn scan_float_or_int_suffix(&mut self, ident: &str) -> Token {
         match ident {
-            "is" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize),
-            "us" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize),
+            "isize" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize),
+            "usize" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize),
             "u8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U8),
             "i8" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::I8),
             "u16" => Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::U16),
@@ -783,7 +787,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                 match self.r.peek() {
                     Some('>') => self.eat(Token::FatArrow),
                     Some('=') => self.eat(Token::EqEq),
-                    _ => Token::Lt
+                    _ => Token::Eq
                 }
             },
             '<' => {
@@ -798,7 +802,7 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
                             _ => Token::BinOp(BinOpKind::Shl)
                         }
                     }
-                    _ => Token::Eq,
+                    _ => Token::Lt,
                 }
             },
             '>' => {
@@ -979,17 +983,17 @@ impl<'this, S:StringScanner> Lexer<'this, S> {
         Some((token, self.r.current_position()))
     }
 
-    pub fn scan<'a>(&'a mut self) -> LexerIterator<'a, 'this, S>  {
+    pub fn scan<'lexer>(&'lexer mut self) -> LexerIterator<'lexer, 'a, S>  {
         LexerIterator { lexer: self, seen_char: false }
     }
 }
 
-pub struct LexerIterator<'this, 'lexer: 'this, S:StringScanner> {
-    lexer: &'this mut Lexer<'lexer, S>,
+pub struct LexerIterator<'lexer, 'e:'lexer, S:StringScanner+'lexer> {
+    lexer: &'lexer mut Lexer<'e, S>,
     seen_char: bool
 }
 
-impl<'this, 'lexer, S:StringScanner> LexerIterator<'this, 'lexer, S> {
+impl<'lexer, '_, S:StringScanner> LexerIterator<'lexer, '_, S> {
     fn raise_error_on_illegal_token(&mut self, result: Option<(Token, Span)>) {
         if self.seen_char { 
             if let Some((Token::Ident, ident_span)) = result {
@@ -1012,7 +1016,7 @@ impl<'this, 'lexer, S:StringScanner> LexerIterator<'this, 'lexer, S> {
     }
 }
 
-impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S> {
+impl<'lexer, '_, S:StringScanner> Iterator for LexerIterator<'lexer, '_, S> {
     type Item = (Token, Span);
 
     // Most of this code is proper error handling of 'a'b
@@ -1024,106 +1028,112 @@ impl<'this, 'lexer, S:StringScanner> Iterator for LexerIterator<'this, 'lexer, S
     }
 }
 
-#[allow(dead_code)]
-fn fail_on_parse_error(_: &Lexer<SimpleStringScanner>, er: LexingError, i: u32) {
-    panic!(format!("{:?}", (er,i)));
-}
+#[cfg(test)]
+mod test {
+    use std::cell::Cell;
+    use super::{SimpleStringScanner, Lexer, LexingError};
+    use super::token::{Token, StringLiteralKind};
 
-// Testing
+    #[allow(dead_code)]
+    fn fail_on_parse_error(_: &Lexer<SimpleStringScanner>, er: LexingError, i: u32) {
+        panic!(format!("{:?}", (er,i)));
+    }
 
-#[allow(dead_code)]
-fn prepare_lexer<'a>(ss: String) -> Lexer<'a, SimpleStringScanner> {
-    let scanner = SimpleStringScanner::new(ss);
-    Lexer::new(scanner, Some(Box::new(fail_on_parse_error)))
-}
+    #[allow(dead_code)]
+    fn prepare_lexer<'a>(ss: String) -> Lexer<'a, SimpleStringScanner> {
+        let scanner = SimpleStringScanner::new(ss);
+        Lexer::new(scanner, Some(Box::new(fail_on_parse_error)))
+    }
 
-#[test]
-fn lex_whitespace() {
-    let text = "   \t \n \r";
-    let mut lexer = prepare_lexer(text.to_string());
-    let span_opt = lexer.scan_token();
-    assert!(span_opt.is_some());
-    let (token, span) = span_opt.unwrap();
-    assert!(token == Token::Whitespace);
-    assert!(span.start as usize == 0);
-    assert!(span.end as usize == text.len());
-    assert!(lexer.scan_token().is_none());
-}
-
-
-#[test]
-fn lex_string() {
-    let text = "\"adąęa\"";
-    let mut lexer = prepare_lexer(text.to_string());
-    let span_opt = lexer.scan_token();
-    assert!(span_opt.is_some());
-    assert!(lexer.scan_token().is_none());
-    let (token, span) = span_opt.unwrap();
-    assert!(if let Token::StringLiteral(StringLiteralKind::Normal) = token { true } else { false });
-    assert!(span.start as usize == 0);
-    assert!(span.end as usize == text.len());
-    assert!(lexer.scan_token().is_none());
-}
-
-#[test]
-fn fail_on_eof() {    
-    let text = "\"abc";
-    let scanner = SimpleStringScanner::new(text.to_string());
-    let mut error = None;
-    let span_opt = {
-        let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, _| { error = Some(er); } )));
+    #[test]
+    fn lex_whitespace() {
+        let text = "   \t \n \r";
+        let mut lexer = prepare_lexer(text.to_string());
         let span_opt = lexer.scan_token();
+        assert!(span_opt.is_some());
+        let (token, span) = span_opt.unwrap();
+        assert!(token == Token::Whitespace);
+        assert!(span.start as usize == 0);
+        assert!(span.end as usize == text.len());
         assert!(lexer.scan_token().is_none());
-        span_opt
-    };
-    assert!(error.is_some());
-    assert!(error.unwrap() == LexingError::Eof);
-    assert!(span_opt.is_some());
-    let (token, span) = span_opt.unwrap();
-    assert!(if let Token::StringLiteral(StringLiteralKind::Normal) = token { true } else { false });
-    assert!(span.start as usize == 0);
-    assert!(span.end as usize == text.len());
-}
+    }
 
-#[test]
-fn fail_on_non_ascii() {    
-    let text = "b\"aębc\"";
-    let scanner = SimpleStringScanner::new(text.to_string());
-    let mut error = None;
-    let mut err_idx = 0;
-    let mut err_count = 0i32;
-    let span_opt = {
-        let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
-            error = Some(er);
-            err_idx = idx;
-            err_count += 1;
-        })));
+
+    #[test]
+    fn lex_string() {
+        let text = "\"adąęa\"";
+        let mut lexer = prepare_lexer(text.to_string());
         let span_opt = lexer.scan_token();
+        assert!(span_opt.is_some());
         assert!(lexer.scan_token().is_none());
-        span_opt
-    };
-    assert!(err_count == 1);
-    assert!(error.is_some());
-    assert!(error.unwrap() == LexingError::NonAsciiByte);
-    assert!(err_idx == 3);
-    assert!(span_opt.is_some());
-    let (token, span) = span_opt.unwrap();
-    assert!(if let Token::ByteStringLiteral(StringLiteralKind::Normal) = token { true } else { false });
-    assert!(span.start as usize == 0);
-    assert!(span.end as usize == text.len());
-}
+        let (token, span) = span_opt.unwrap();
+        assert!(if let Token::StringLiteral(StringLiteralKind::Normal) = token { true } else { false });
+        assert!(span.start as usize == 0);
+        assert!(span.end as usize == text.len());
+        assert!(lexer.scan_token().is_none());
+    }
 
-#[test]
-fn hex_eofs() { 
-    let text = ["'\\x", "'\\xf", "'\\xff"];
-    let i = ::std::cell::Cell::new(3);
-    for t in text.iter() {
-        let scanner = SimpleStringScanner::new(t.to_string());
-        let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
-            assert!((idx as usize) == i.get());
-            assert!(er == LexingError::Eof);
-        })));
-        lexer.scan_token();
-        i.set(i.get()+1);
+    #[test]
+    fn fail_on_eof() {    
+        let text = "\"abc";
+        let scanner = SimpleStringScanner::new(text.to_string());
+        let (mut error, span_opt) : (Option<_>, _);
+        error = None;
+        span_opt = {
+            let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, _| { error = Some(er); } )));
+            let span_opt = lexer.scan_token();
+            assert!(lexer.scan_token().is_none());
+            span_opt
+        };
+        assert!(error.is_some());
+        assert!(error.unwrap() == LexingError::Eof);
+        assert!(span_opt.is_some());
+        let (token, span) = span_opt.unwrap();
+        assert!(if let Token::StringLiteral(StringLiteralKind::Normal) = token { true } else { false });
+        assert!(span.start as usize == 0);
+        assert!(span.end as usize == text.len());
+    }
+
+    #[test]
+    fn fail_on_non_ascii() {    
+        let text = "b\"aębc\"";
+        let scanner = SimpleStringScanner::new(text.to_string());
+        let mut error = None;
+        let mut err_idx = 0;
+        let mut err_count = 0i32;
+        let span_opt = {
+            let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
+                error = Some(er);
+                err_idx = idx;
+                err_count += 1;
+            })));
+            let span_opt = lexer.scan_token();
+            assert!(lexer.scan_token().is_none());
+            span_opt
+        };
+        assert!(err_count == 1);
+        assert!(error.is_some());
+        assert!(error.unwrap() == LexingError::NonAsciiByte);
+        assert!(err_idx == 3);
+        assert!(span_opt.is_some());
+        let (token, span) = span_opt.unwrap();
+        assert!(if let Token::ByteStringLiteral(StringLiteralKind::Normal) = token { true } else { false });
+        assert!(span.start as usize == 0);
+        assert!(span.end as usize == text.len());
+    }
+
+    #[test]
+    fn hex_eofs() { 
+        let text = ["'\\x", "'\\xf", "'\\xff"];
+        let i = ::std::cell::Cell::new(3);
+        for t in text.iter() {
+            let scanner = SimpleStringScanner::new(t.to_string());
+            let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
+                assert!((idx as usize) == i.get());
+                assert!(er == LexingError::Eof);
+            })));
+            lexer.scan_token();
+            i.set(i.get()+1);
+        }
     }
 }

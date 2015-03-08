@@ -9,7 +9,16 @@
     #define YYNOERRORRECOVERY
     #define assert(x)
     #define TOKEN_COUNT 10
-#line 13 "raw_parse.c"
+    /* those two structs can't be forward-delcared because they are used in an union */
+    struct span {
+        uint32_t start;
+        uint32_t length;
+    };
+    struct parsed_token {
+        struct span span;
+        unsigned char token; //YYCODETYPE
+    };
+#line 22 "raw_parse.c"
 /* Next is all token values, in a form suitable for use by makeheaders.
 ** This section will be null unless lemon is run with the -m switch.
 */
@@ -62,7 +71,7 @@
 #define YYCODETYPE unsigned char
 #define YYNOCODE 17
 #define YYACTIONTYPE unsigned char
-#define ParseTOKENTYPE void*
+#define ParseTOKENTYPE  struct parsed_token 
 typedef union {
   int yyinit;
   ParseTOKENTYPE yy0;
@@ -656,14 +665,26 @@ static void yy_reduce(
   **  #line <lineno> <thisfile>
   **     break;
   */
+      case 4: /* meta_item ::= IDENT EQ STRING_LIT */
+#line 23 "raw_parse.y"
+{ meta_item_eq(yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
+#line 672 "raw_parse.c"
+        break;
+      case 5: /* meta_item ::= IDENT LPAREN RPAREN */
+#line 24 "raw_parse.y"
+{ meta_item_single(yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
+#line 677 "raw_parse.c"
+        break;
+      case 6: /* meta_item ::= IDENT LPAREN COMMA RPAREN */
+#line 25 "raw_parse.y"
+{ meta_item_multi(yymsp[-3].minor.yy0, yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
+#line 682 "raw_parse.c"
+        break;
       default:
       /* (0) crate ::= attrs */ yytestcase(yyruleno==0);
       /* (1) attrs ::= inner_attr */ yytestcase(yyruleno==1);
       /* (2) attrs ::= attrs inner_attr */ yytestcase(yyruleno==2);
       /* (3) inner_attr ::= POUND NOT LBRACKET meta_item RBRACKET */ yytestcase(yyruleno==3);
-      /* (4) meta_item ::= IDENT EQ STRING_LIT */ yytestcase(yyruleno==4);
-      /* (5) meta_item ::= IDENT LPAREN RPAREN */ yytestcase(yyruleno==5);
-      /* (6) meta_item ::= IDENT LPAREN COMMA RPAREN */ yytestcase(yyruleno==6);
         break;
   };
   yygoto = yyRuleInfo[yyruleno].lhs;

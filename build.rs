@@ -2,8 +2,8 @@ extern crate gcc;
 
 fn main() {
     gcc::Config::new()
-                .file("src/cimeon/raw_parse.c")
                 .file("src/cimeon/token_lookup.c")
+                .file("src/cimeon/cimeon.c")
                 .flag("-std=c99")
                 .flag("-pedantic")
                 .flag("-Wall")

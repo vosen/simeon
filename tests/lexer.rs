@@ -59,9 +59,9 @@ mod lexer {
     lexer_test!(int_literals_short("0/0", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), (0, 1)),
                                            (Token::BinOp(BinOpKind::Slash), (1, 2)),
                                            (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), (2, 3))]));
-    lexer_test!(int_literal_suffixed1("123is", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize), (0, 5))]));
-    lexer_test!(int_literal_suffixed2("123us", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize), (0, 5))]));
-    lexer_test!(int_literal_suffixed3("123_us", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize), (0, 6))]));
+    lexer_test!(int_literal_suffixed1("123isize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Isize), (0, 8))]));
+    lexer_test!(int_literal_suffixed2("123usize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize), (0, 8))]));
+    lexer_test!(int_literal_suffixed3("123_usize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::Usize), (0, 9))]));
     lexer_test!(int_literal_suffixed4("0xff_u8", [(Token::IntegerLiteral(IntegerLiteralBase::Hex, IntegerLiteralSuffix::U8), (0, 7))]));
     lexer_test!(int_literal_suffixed5("0o70_i16", [(Token::IntegerLiteral(IntegerLiteralBase::Octal, IntegerLiteralSuffix::I16), (0, 8))]));
     lexer_test!(int_literal_suffixed6("0b1111_1111_1001_0000_i32", [(Token::IntegerLiteral(IntegerLiteralBase::Binary, IntegerLiteralSuffix::I32), (0, 25))]));
@@ -71,6 +71,13 @@ mod lexer {
     lexer_test!(float_literal3("12E+99_f64", [(Token::FloatLiteral(FloatLiteralSuffix::F64), (0, 10))]));
     lexer_test!(float_literal5("002.", [(Token::FloatLiteral(FloatLiteralSuffix::None), (0, 4))]));
     lexer_test!(illegal_token("``` ", [(Token::UnexpectedSequence, (0, 3)), (Token::Whitespace, (3, 4)) ]));
+    lexer_test!(simple_attr("#![ident=\"asd\"]", [(Token::Pound, (0, 1)),
+                                                  (Token::Not, (1, 2)),
+                                                  (Token::LeftBracket, (2, 3)),
+                                                  (Token::Ident, (3, 8)),
+                                                  (Token::Eq, (8, 9)),
+                                                  (Token::StringLiteral(_), (9, 14)),
+                                                  (Token::RightBracket, (14, 15))]));
 
     mod error {
         use simeon::lexer::*;
@@ -84,15 +91,17 @@ mod lexer {
                     let scanner = SimpleStringScanner::new(text.to_string());
                     let mut tokens = Vec::new();
                     let last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
-                    let mut lexer = Lexer::new(scanner, Some(box |_, er, idx| {
-                        if let Some(err_unwrapped) = last_error.get() {
-                            panic!("raised more than one error for a token. old: {:?}, new: {:?}", err_unwrapped, (er,idx));
+                    {
+                        let mut lexer = Lexer::new(scanner, Some(box |_, er, idx| {
+                            if let Some(err_unwrapped) = last_error.get() {
+                                panic!("raised more than one error for a token. old: {:?}, new: {:?}", err_unwrapped, (er,idx));
+                            }
+                            last_error.set(Some((er,idx)));
+                        }));
+                        for t in lexer.scan() {
+                            tokens.push((t.0, last_error.get()));
+                            last_error.set(None);
                         }
-                        last_error.set(Some((er,idx)));
-                    }));
-                    for t in lexer.scan() {
-                        tokens.push((t.0, last_error.get()));
-                        last_error.set(None);
                     }
                     let mut i = 0;
                     $({
@@ -132,8 +141,8 @@ mod lexer {
                                                             (Token::Whitespace, None),
                                                             (Token::CharLiteral, Some((LexingError::Eof, 4))) ]));
         lexer_test_errors!(char_unescaped_char("'''", [(Token::CharLiteral, Some((LexingError::UnescapedLiteral, 1))) ]));
-        lexer_test_errors!(illegal_int_suffix1("1i16us", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
-        lexer_test_errors!(illegal_int_suffix2("1a16us", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
+        lexer_test_errors!(illegal_int_suffix1("1i16usize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
+        lexer_test_errors!(illegal_int_suffix2("1a16usize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
         lexer_test_errors!(mismatched_int_suffix("0b1f64", [(Token::IntegerLiteral(IntegerLiteralBase::Binary, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 3))) ]));
         lexer_test_errors!(mismatched_float_suffix("0.1u32", [(Token::FloatLiteral(FloatLiteralSuffix::None), Some((LexingError::IllegalSuffix, 3))) ]));
     }

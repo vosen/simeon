@@ -1,5 +1,6 @@
 use std::mem;
 use core::nonzero::NonZero;
+use std::borrow::{Borrow, BorrowMut};
 
 /// Non-dereferencable pointer
 #[unsafe_no_drop_flag]
@@ -10,14 +11,6 @@ pub struct OpaqueBox<T> {
 impl<T> OpaqueBox<T> {
 	pub fn new(value: Box<T>) -> OpaqueBox<T> {
 		OpaqueBox { data: unsafe { mem::transmute(value) } }
-	}
-
-	pub fn as_ref<'a>(&'a self) -> &'a T {
-		unsafe { mem::transmute::<NonZero<*const T>, &_>(self.data) }
-	}
-
-	pub fn as_mut<'a>(&'a mut self) -> &'a mut T {
-		unsafe { mem::transmute::<NonZero<*const T>, &mut _>(self.data) }
 	}
 }
 
@@ -31,6 +24,18 @@ impl<T> Drop for OpaqueBox<T> {
 
 unsafe impl<T: 'static> Send for OpaqueBox<T> {}
 
+impl<T> Borrow<T> for OpaqueBox<T> {
+	fn borrow<'a>(&self) -> &'a T {
+		unsafe { mem::transmute::<NonZero<*const T>, &_>(self.data) }
+	}
+}
+
+impl<T> BorrowMut<T> for OpaqueBox<T> {
+	fn borrow_mut<'a>(&mut self) -> &'a mut T {
+		unsafe { mem::transmute::<NonZero<*const T>, &mut _>(self.data) }
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use std::mem;
@@ -43,6 +48,6 @@ mod tests {
 
 	#[test]
 	fn opaque_box_is_sendable() {
-		Box::new(OpaqueBox::new(Box::new(1us))) as Box<Send>;
+		Box::new(OpaqueBox::new(Box::new(1usize))) as Box<Send>;
 	}
 }
