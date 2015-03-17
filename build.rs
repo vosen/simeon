@@ -7,11 +7,14 @@ fn main() {
                 .flag("-std=c99")
                 .flag("-pedantic")
                 .flag("-Wall")
-                //.flag("-Werror")
                 .flag("-Wshadow")
                 .flag("-Wpointer-arith")
+                .flag("-Wcast-align")
                 .flag("-Wcast-qual")
                 .flag("-Wstrict-prototypes")
                 .flag("-Wno-unused-but-set-variable")
+                //.flag("-Werror")
+                //.flag("-g")
+                //.flag("-O0")
                 .compile("libcimeon.a");
 }

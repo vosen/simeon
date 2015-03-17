@@ -1,6 +1,7 @@
 use std::mem;
 use core::nonzero::NonZero;
 use std::borrow::{Borrow, BorrowMut};
+use std::ops::Deref;
 
 /// Non-dereferencable pointer
 #[unsafe_no_drop_flag]
@@ -25,15 +26,23 @@ impl<T> Drop for OpaqueBox<T> {
 unsafe impl<T: 'static> Send for OpaqueBox<T> {}
 
 impl<T> Borrow<T> for OpaqueBox<T> {
-	fn borrow<'a>(&self) -> &'a T {
+	fn borrow<'a>(&'a self) -> &'a T {
 		unsafe { mem::transmute::<NonZero<*const T>, &_>(self.data) }
 	}
 }
 
 impl<T> BorrowMut<T> for OpaqueBox<T> {
-	fn borrow_mut<'a>(&mut self) -> &'a mut T {
+	fn borrow_mut<'a>(&'a mut self) -> &'a mut T {
 		unsafe { mem::transmute::<NonZero<*const T>, &mut _>(self.data) }
 	}
+}
+
+impl<T> Deref for OpaqueBox<T> {
+    type Target = T;
+
+    fn deref<'a>(&'a self) -> &'a T {
+        &self.borrow()
+    }
 }
 
 #[cfg(test)]

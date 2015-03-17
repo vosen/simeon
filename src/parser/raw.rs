@@ -4,6 +4,9 @@ use libc::{size_t, c_void, c_int};
 use super::YYCODETYPE;
 use std::ptr::copy_nonoverlapping_memory;
 use std::mem::uninitialized;
+use super::token;
+use super::token::{IdentNode, EqNode, StringLiteralNode, PoundNode, NotNode, LeftBracketNode, RightBracketNode};
+use ptr::OpaqueBox;
 
 pub fn token_type(token: Token) -> c_int {
 	match token {
@@ -17,10 +20,7 @@ pub fn token_type(token: Token) -> c_int {
 		Token::LeftParen => 8,
 		Token::RightParen => 9,
 		Token::Comma => 10,
-		_ => {
-			println!("{:?}", token);
-			unimplemented!()
-		}
+		_ => unimplemented!()
 	}
 }
 
@@ -64,31 +64,80 @@ fn unpickle_token(pickled: u32) -> Option<Token> {
 }
 
 #[no_mangle]
-pub extern fn meta_item_eq(i: ParsedToken, e: ParsedToken, s: ParsedToken) {
-	println!("({:?}, {:?})", i.span, unpickle_token(i.token));
-	println!("({:?}, {:?})", e.span, unpickle_token(e.token));
-	println!("({:?}, {:?})", s.span, unpickle_token(s.token));
+pub extern fn crate_(attrs: Box<Vec<Box<super::InnerAttributeNode>>>) -> OpaqueBox<super::Crate> {
+	OpaqueBox::new(Box::new(super::Crate::__new(attrs)))
 }
 
 #[no_mangle]
-pub extern fn meta_item_single(i: ParsedToken, l: ParsedToken, r: ParsedToken) {
-	println!("{:?}", i);
-	println!("{:?}", l);
-	println!("{:?}", r);
+pub extern fn attrs(inner_attr: Box<super::InnerAttributeNode>) -> Box<Vec<Box<super::InnerAttributeNode>>> {
+	Box::new(vec!(inner_attr))
 }
 
 #[no_mangle]
-pub extern fn meta_item_multi(i: ParsedToken, l: ParsedToken, c: ParsedToken, r: ParsedToken) {
-	println!("{:?}", i);
-	println!("{:?}", l);
-	println!("{:?}", c);
-	println!("{:?}", r);
+pub extern fn append_attr(mut attrs: Box<Vec<Box<super::InnerAttributeNode>>>, attr: Box<super::InnerAttributeNode>) -> Box<Vec<Box<super::InnerAttributeNode>>> {
+	attrs.push(attr);
+	attrs
 }
 
-/* We don't really care about size of Token type, but for the purpose
- * of passing data to the 
- */
-#[test]
-fn token_fits_in_4_bytes() {
-    assert!(::std::mem::size_of::<Option<Token>>() <= 4);
+#[no_mangle]
+pub extern fn inner_attr(pound: ParsedToken, not: ParsedToken, lbracket: ParsedToken, item: super::MetaItem, rbracket: ParsedToken) ->  Box<super::InnerAttributeNode> {
+	Box::new(
+		super::InnerAttributeNode::__new(
+			PoundNode::__new(pound.span),
+			NotNode::__new(not.span),
+			LeftBracketNode::__new(lbracket.span),
+			item,
+			RightBracketNode::__new(rbracket.span)
+		)
+	)
+}
+
+#[no_mangle]
+pub extern fn meta_item_eq(ident: ParsedToken, eq: ParsedToken, string_literal: ParsedToken) -> super::MetaItem {
+	let meta_item = Box::new(
+		super::MetaItemPair::__new(
+			IdentNode::__new(ident.span),
+			EqNode::__new(eq.span),
+			StringLiteralNode::__new(string_literal.span),
+		)
+	);
+	super::MetaItem::NameValuePair(meta_item)
+}
+
+#[no_mangle]
+pub extern fn meta_item_single(ident: ParsedToken, lbracket: ParsedToken, rbracket: ParsedToken) -> super::MetaItem {
+	unimplemented!()
+}
+
+#[no_mangle]
+pub extern fn meta_item_multi(ident: ParsedToken, lbracket: ParsedToken, c: ParsedToken, rbracket: ParsedToken) -> super::MetaItem {
+	unimplemented!()
+}
+
+#[cfg(test)]
+mod test {
+	use libc::{size_t, c_void};
+	use super::super::MetaItem;
+	use std::mem::{size_of, align_of};
+	use lexer::token::Token;
+
+	#[repr(C)]
+	struct interop_meta_item {
+		dicriminant: size_t,
+		data_ptr: *const c_void,
+	}
+
+	/* We don't really care about size of Token type, but for the purpose
+	 * of passing data to the C part we better make sure that it's smaller or equal to u32
+	 */
+	#[test]
+	fn token_fits_in_4_bytes() {
+	    assert!(::std::mem::size_of::<Option<Token>>() <= 4);
+	}
+
+	#[test]
+	fn discriminant_enum_is_interoperable() {
+		assert!(size_of::<MetaItem>() == size_of::<interop_meta_item>());
+		assert!(align_of::<MetaItem>() == align_of::<interop_meta_item>());
+	}
 }

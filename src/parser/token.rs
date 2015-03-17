@@ -1,6 +1,7 @@
 use super::super::Span;
 use super::super::lexer::LexingError;
 use super::{SyntaxNode, AuxiliaryNode};
+use std::mem::uninitialized;
 
 macro_rules! node_type_for_token(
 	($tok: ident) => (
@@ -20,6 +21,16 @@ macro_rules! node_type_for_token(
 			fn trailing_aux<'a>(&'a self) -> &'a [AuxiliaryNode] { (self.trailing_aux_fn)(self) }
 		}
 		impl<P> $tok<P> {
+			#[doc(hidden)]
+			pub fn __new(sp: Span) -> $tok<P> {
+				$tok::<P> {
+					parent: unsafe { uninitialized() },
+					sp: sp,
+					error: None,
+					leading_aux_fn: Box::new(|_| unsafe { ::std::intrinsics::init() }),
+					trailing_aux_fn: Box::new(|_| unsafe { ::std::intrinsics::init() })
+				}
+			}
 			pub fn error(&self) -> Option<LexingError> { self.error }
 		}
 	)
@@ -33,3 +44,4 @@ node_type_for_token!(PoundNode);
 node_type_for_token!(NotNode);
 node_type_for_token!(LeftBracketNode);
 node_type_for_token!(RightBracketNode);
+node_type_for_token!(StringLiteralNode);

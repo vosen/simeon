@@ -6,19 +6,35 @@
 #include <stdio.h>
 #line 1 "raw_parse.y"
 
+    #include <string.h>
     #define YYNOERRORRECOVERY
     #define assert(x)
     #define TOKEN_COUNT 10
-    /* those two structs can't be forward-delcared because they are used in an union */
+    /* those two structs can't be forward-declared because they are used in an union */
     struct span {
         uint32_t start;
         uint32_t length;
     };
-    struct parsed_token {
+    typedef struct parsed_token {
         struct span span;
-        unsigned char token; //YYCODETYPE
-    };
-#line 22 "raw_parse.c"
+        uint32_t token;
+    } parsed_token;
+    typedef struct node_variant {
+        size_t discriminant;
+        void* data;
+    } node_variant;
+    typedef struct node {
+        void* data;
+    } node;
+
+    node crate_(node attrs);
+    node attrs(node inner_a);
+    node append_attr(node attrs, node attr);
+    node inner_attr(parsed_token p, parsed_token n, parsed_token l, node_variant meta_i, parsed_token r);
+    node_variant meta_item_eq(parsed_token i, parsed_token e, parsed_token s);
+    node_variant meta_item_single(parsed_token i, parsed_token l, parsed_token r);
+    node_variant meta_item_multi(parsed_token i, parsed_token l, parsed_token c, parsed_token r);
+#line 38 "raw_parse.c"
 /* Next is all token values, in a form suitable for use by makeheaders.
 ** This section will be null unless lemon is run with the -m switch.
 */
@@ -71,10 +87,12 @@
 #define YYCODETYPE unsigned char
 #define YYNOCODE 17
 #define YYACTIONTYPE unsigned char
-#define ParseTOKENTYPE  struct parsed_token 
+#define ParseTOKENTYPE  parsed_token 
 typedef union {
   int yyinit;
   ParseTOKENTYPE yy0;
+  node yy7;
+  node_variant yy15;
 } YYMINORTYPE;
 #ifndef YYSTACKDEPTH
 #define YYSTACKDEPTH 100
@@ -665,26 +683,45 @@ static void yy_reduce(
   **  #line <lineno> <thisfile>
   **     break;
   */
+      case 0: /* crate ::= attrs */
+#line 36 "raw_parse.y"
+{
+    yygotominor.yy7 = crate_(yymsp[0].minor.yy7);
+    memcpy(&yypParser->yystack[0].minor, &yygotominor.yy7, sizeof(yygotominor.yy7));
+}
+#line 693 "raw_parse.c"
+        break;
+      case 1: /* attrs ::= inner_attr */
+#line 42 "raw_parse.y"
+{ yygotominor.yy7 = attrs(yymsp[0].minor.yy7); }
+#line 698 "raw_parse.c"
+        break;
+      case 2: /* attrs ::= attrs inner_attr */
+#line 43 "raw_parse.y"
+{ yygotominor.yy7 = append_attr(yymsp[-1].minor.yy7, yymsp[0].minor.yy7); }
+#line 703 "raw_parse.c"
+        break;
+      case 3: /* inner_attr ::= POUND NOT LBRACKET meta_item RBRACKET */
+#line 46 "raw_parse.y"
+{ yygotominor.yy7 = inner_attr(yymsp[-4].minor.yy0, yymsp[-3].minor.yy0, yymsp[-2].minor.yy0, yymsp[-1].minor.yy15, yymsp[0].minor.yy0); }
+#line 708 "raw_parse.c"
+        break;
       case 4: /* meta_item ::= IDENT EQ STRING_LIT */
-#line 23 "raw_parse.y"
-{ meta_item_eq(yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
-#line 672 "raw_parse.c"
+#line 49 "raw_parse.y"
+{ yygotominor.yy15 = meta_item_eq(yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
+#line 713 "raw_parse.c"
         break;
       case 5: /* meta_item ::= IDENT LPAREN RPAREN */
-#line 24 "raw_parse.y"
-{ meta_item_single(yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
-#line 677 "raw_parse.c"
+#line 50 "raw_parse.y"
+{ yygotominor.yy15 = meta_item_single(yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
+#line 718 "raw_parse.c"
         break;
       case 6: /* meta_item ::= IDENT LPAREN COMMA RPAREN */
-#line 25 "raw_parse.y"
-{ meta_item_multi(yymsp[-3].minor.yy0, yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
-#line 682 "raw_parse.c"
+#line 51 "raw_parse.y"
+{ yygotominor.yy15 = meta_item_multi(yymsp[-3].minor.yy0, yymsp[-2].minor.yy0, yymsp[-1].minor.yy0, yymsp[0].minor.yy0); }
+#line 723 "raw_parse.c"
         break;
       default:
-      /* (0) crate ::= attrs */ yytestcase(yyruleno==0);
-      /* (1) attrs ::= inner_attr */ yytestcase(yyruleno==1);
-      /* (2) attrs ::= attrs inner_attr */ yytestcase(yyruleno==2);
-      /* (3) inner_attr ::= POUND NOT LBRACKET meta_item RBRACKET */ yytestcase(yyruleno==3);
         break;
   };
   yygoto = yyRuleInfo[yyruleno].lhs;

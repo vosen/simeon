@@ -1,5 +1,4 @@
-use super::Span;
-use self::token::{IdentNode, LeftParenNode, RightParenNode, CommaNode, EqNode, PoundNode, NotNode, LeftBracketNode, RightBracketNode};
+use Span;
 use libc::{c_void, c_int, size_t, c_char, c_uchar, c_schar, malloc, free};
 use core::nonzero::NonZero;
 use std::slice;
@@ -10,6 +9,43 @@ use std::default::Default;
 use super::lexer::token::Token;
 use std::slice::from_raw_parts;
 use super::lexer::{Lexer, StringScanner};
+use std::borrow::Borrow;
+
+macro_rules! syntax_node_impl(
+	($name: ty, $parent: ty) => (
+		impl SyntaxNode<$parent> for $name {
+			fn span(&self) -> Span { self.node_data.sp }
+			fn has_errors(&self) -> bool { self.node_data.has_errors }
+			fn parent<'a>(&'a self) -> &'a $parent { unsafe { &*self.node_data.parent } }
+			fn leading_aux<'a>(&'a self) -> &'a [AuxiliaryNode] { self._leading_aux() }
+			fn trailing_aux<'a>(&'a self) -> &'a [AuxiliaryNode] { self._trailing_aux() }
+		}
+	)
+);
+
+macro_rules! typed_token_tuple(
+	($name: ident, $parent: ident, $($arg: ident : $arg_type: ty),+) => (
+		pub struct $name {
+			$( $arg: $arg_type, )+
+		}
+
+		impl $name {
+			$(pub fn $arg(&self) -> &$arg_type {
+				&self.$arg
+			})+
+
+			#[doc(hidden)]
+			pub fn __new($($arg: $arg_type ,)+ ) -> $name {
+				$name {
+					$($arg: $arg,)+
+				}
+			}
+		}
+	)
+);
+
+pub use self::attr::{InnerAttributeNode, MetaItem, MetaItemList, MetaItemPair};
+pub mod attr;
 
 pub mod token;
 #[doc(hidden)] // otherwise functions from this module won't get exported
@@ -34,13 +70,13 @@ pub mod raw;
  */
 
 pub struct Crate {
-	attrs: Vec<InnerAttributeNode>,
+	attrs: Vec<Box<InnerAttributeNode>>,
 	leading_aux: Vec<AuxiliaryNode>,
 	trailing_aux: Vec<AuxiliaryNode>,
 }
 
 impl Crate {
-	pub fn attributes(&self) -> &[InnerAttributeNode] {
+	pub fn attributes(&self) -> &[Box<InnerAttributeNode>] {
 		self.attrs.as_slice()
 	}
 
@@ -50,6 +86,15 @@ impl Crate {
 
 	pub fn trailing_aux(&self) -> &[AuxiliaryNode] {
 		self.trailing_aux.as_slice()
+	}
+
+	#[doc(hidden)]
+	pub fn __new(a: Box<Vec<Box<InnerAttributeNode>>>) -> Crate {
+		Crate {
+			attrs: *a,
+			leading_aux: vec!(),
+			trailing_aux: vec!()
+		}
 	}
 }
 
@@ -81,27 +126,9 @@ pub trait SyntaxNode<P> {
 	fn trailing_aux<'a>(&'a self) -> &'a [AuxiliaryNode];
 }
 
-macro_rules! syntax_node_impl(
-	($name: ty, $parent: ty) => (
-		impl SyntaxNode<$parent> for $name {
-			fn span(&self) -> Span { self.node_data.sp }
-			fn has_errors(&self) -> bool { self.node_data.has_errors }
-			fn parent<'a>(&'a self) -> &'a $parent { & unsafe { *self.node_data.parent } }
-		}
-	)
-);
-
-macro_rules! syntax_node_impl(
-	($name: ty, $parent: ty) => (
-		impl SyntaxNode<$parent> for $name {
-			fn span(&self) -> Span { self.node_data.sp }
-			fn has_errors(&self) -> bool { self.node_data.has_errors }
-			fn parent<'a>(&'a self) -> &'a $parent { unsafe { &*self.node_data.parent } }
-			fn leading_aux<'a>(&'a self) -> &'a [AuxiliaryNode] { self._leading_aux() }
-			fn trailing_aux<'a>(&'a self) -> &'a [AuxiliaryNode] { self._trailing_aux() }
-		}
-	)
-);
+trait SyntaxNodeInternal {
+	fn set_parent(&mut self, parent: *const c_void);
+}
 
 struct GenericNodeData<P> {
 	parent: *const P,
@@ -109,42 +136,14 @@ struct GenericNodeData<P> {
 	has_errors: bool,
 }
 
-// atribute node
-pub struct InnerAttributeNode {
-    node_data: GenericNodeData<Crate>,
-    leading_aux: Option<Vec<AuxiliaryNode>>,
-	index: usize,
-	pound: PoundNode<InnerAttributeNode>,
-	not: NotNode<InnerAttributeNode>,
-	left_bracket: LeftBracketNode<InnerAttributeNode>,
-	content: MetaItem,
-	right_bracket: RightBracketNode<InnerAttributeNode>
-}
-syntax_node_impl!(InnerAttributeNode, Crate);
-impl InnerAttributeNode {
-	fn _leading_aux<'a>(&'a self) -> &'a [AuxiliaryNode] {
-		if let Some(ref vec) = self.leading_aux {
-			return vec.as_slice();
+impl<P> GenericNodeData<P> {
+	pub fn new(sp: Span) -> GenericNodeData<P> {
+		GenericNodeData {
+			parent: ::std::ptr::null(),
+			sp: sp,
+			has_errors: false
 		}
-		self.parent().leading_aux.as_slice()
 	}
-	fn _trailing_aux<'a>(&'a self) -> &'a [AuxiliaryNode] {
-		if self.parent().attrs.len() == self.index - 1 {
-			return self.parent().trailing_aux.as_slice();
-		}
-		self.parent().attrs[self.index + 1].leading_aux()
-	}
-	pub fn pound(&self) -> &PoundNode<InnerAttributeNode> { &self.pound }
-	pub fn not(&self) -> &NotNode<InnerAttributeNode> { &self.not }
-	pub fn left_bracket(&self) -> &LeftBracketNode<InnerAttributeNode> { &self.left_bracket }
-	pub fn content(&self) -> &MetaItem { &self.content }
-	pub fn right_bracket(&self) -> &RightBracketNode<InnerAttributeNode> { &self.right_bracket }
-}
-
-pub enum MetaItem {
-	Word(IdentNode<MetaItem>),
-	List(IdentNode<MetaItem>, LeftParenNode<MetaItem>, /* TODO: seq node will go here */ Option<CommaNode<MetaItem>>, RightParenNode<MetaItem>),
-	NameValuePair(IdentNode<MetaItem>, EqNode<MetaItem>, /* TODO: literal node will go here */ )
 }
 
 type YYACTIONTYPE = c_uchar;
@@ -169,6 +168,7 @@ extern {
 	static unchecked_actions_list: *const viable_token_list;
 	static checked_actions_list: *const viable_token_list;
 	fn current_state(pptr: *mut c_void) -> YYACTIONTYPE;
+	fn top_custom_state_ptr(pptr: *mut c_void) -> OpaqueBox<Crate>;
 	fn can_reduce_and_shift(pptr: *mut c_void, token: YYCODETYPE) -> c_int;
     fn ParseAlloc(mallocProc: unsafe extern "C" fn(arg1: size_t) -> *mut c_void) -> *mut c_void;
     fn ParseFree(p: *mut c_void, freeProc: unsafe extern "C" fn(arg1: *mut c_void)-> ()) -> ();
@@ -283,7 +283,7 @@ impl<'l, S:StringScanner> Parser<'l, S> {
 			unsafe { Parse(unwrap_nnz(self.raw_parser), raw::token_type(token_span.0), raw::ParsedToken::new(token_span)) };
 		}
 		unsafe { Parse(unwrap_nnz(self.raw_parser), 0, raw::ParsedToken::new_eof(self.lexer.scanner().current_position())) };
-		unsafe { ::std::intrinsics::uninit() }
+		unsafe { top_custom_state_ptr(unwrap_nnz(self.raw_parser)) }
 	}
 }
 
@@ -297,7 +297,10 @@ impl<'l, S:StringScanner> Drop for Parser<'l, S> {
 #[cfg(test)]
 mod test {
 	use super::super::lexer::{Lexer, SimpleStringScanner};
-	use super::Parser;
+	use super::{Parser, Crate, SyntaxNode, MetaItem};
+	use std::borrow::Borrow;
+	use ptr::OpaqueBox;
+	use Span;
 
 	#[test]
 	fn parse_simple_attr() {
@@ -305,20 +308,49 @@ mod test {
 		let mut parser = Parser::new(
 			Lexer::new(
 				SimpleStringScanner::new(text),
-				Some(Box::new(|_,_,_| { panic!(); }))
+				Some(Box::new(|_,_,_| { assert!(false); }))
 			)
 		);
-		let _crate = parser.parse();
+		let _crate : OpaqueBox<Crate> = parser.parse();
+		assert!((&*_crate).attributes().len() == 1);
+		let attr = &(&*_crate).attributes()[0];
+		assert!(attr.pound().span() == Span { start: 0, end: 1 });
+		assert!(attr.not().span() == Span { start: 1, end: 2 });
+		assert!(attr.left_bracket().span() == Span { start: 2, end: 3 });
+		assert!(attr.right_bracket().span() == Span { start: 14, end: 15 });
+		match attr.content() {
+			&MetaItem::NameValuePair(ref meta_pair) => {
+				assert!(meta_pair.ident().span() == Span { start: 3, end: 8 });
+				assert!(meta_pair.eq().span() == Span { start: 8, end: 9 });
+				assert!(meta_pair.string_literal().span() == Span { start: 9, end: 14 });
+			}
+			_ => assert!(false)
+		};
 	}
 
 	#[test]
 	fn recover_from_extra_token() {
 		let text = "#!![ident=\"asd\"]".to_string();
-		let parser = Parser::new(
+		let mut parser = Parser::new(
 			Lexer::new(
 				SimpleStringScanner::new(text),
-				Some(Box::new(|_,_,_| { panic!(); }))
+				Some(Box::new(|_,_,_| { assert!(false); }))
 			)
 		);
+		let _crate : OpaqueBox<Crate> = parser.parse();
+		assert!((&*_crate).attributes().len() == 1);
+		let attr = &(&*_crate).attributes()[0];
+		assert!(attr.pound().span() == Span { start: 0, end: 1 });
+		assert!(attr.not().span() == Span { start: 1, end: 2 });
+		assert!(attr.left_bracket().span() == Span { start: 3, end: 4 });
+		assert!(attr.right_bracket().span() == Span { start: 15, end: 16 });
+		match attr.content() {
+			&MetaItem::NameValuePair(ref meta_pair) => {
+				assert!(meta_pair.ident().span() == Span { start: 4, end: 9 });
+				assert!(meta_pair.eq().span() == Span { start: 9, end: 10 });
+				assert!(meta_pair.string_literal().span() == Span { start: 10, end: 15 });
+			}
+			_ => assert!(false)
+		};
 	}
 }

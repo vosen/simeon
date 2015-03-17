@@ -30,3 +30,12 @@ pub struct Span {
     pub start: u32,
     pub end: u32,
 }
+
+impl Span {
+	pub fn range(start: Span, end: Span) -> Span {
+		Span {
+			start: start.start,
+			end: end.end
+		}
+	}
+}
