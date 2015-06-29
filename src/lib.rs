@@ -1,15 +1,4 @@
-#![feature(unsafe_destructor)]
-#![feature(concat_idents)]
-#![feature(core)]
-#![feature(std_misc)]
-#![feature(unicode)]
-#![feature(hash)]
-#![feature(collections)]
-#![feature(unsafe_no_drop_flag)]
-#![feature(libc)]
-#![feature(str_char)]
-
-extern crate core;
+extern crate unicode_xid;
 
 /*
  * Rust's lexical grammar is not unambiguous.

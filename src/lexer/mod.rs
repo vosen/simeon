@@ -1,6 +1,7 @@
 use super::Span; 
 use std::ascii::AsciiExt;
 use self::token::*;
+use unicode_xid::UnicodeXID;
 
 pub mod token;
 
@@ -51,19 +52,23 @@ impl SimpleStringScanner {
         }
     }
 
+    fn char_at(s: &str, i: usize) -> char {
+        s[i..].chars().next().unwrap()
+    }
+
     // this fn is mostly for debugging
     #[allow(deprecated)]
     pub fn slice_at(&self, sp: Span) -> &str {
-        self.s.slice(sp.start as usize, sp.end as usize)
+        &self.s[sp.start as usize..sp.end as usize]
     }
 
     fn is_eof(&self, idx: u32) -> bool { (idx as usize) >= self.s.len() }
     fn peek_to(&self, idx: u32) -> Option<char> {
         if self.is_eof(idx) {
-            return None;
+            None
         }
         else {
-            return Some(self.s.char_at(idx as usize));
+            Some(SimpleStringScanner::char_at(&*self.s, idx as usize))
         }
     }
 }
@@ -78,7 +83,7 @@ impl StringScanner for SimpleStringScanner {
             panic!("Can't advance beyond the scanned string");
         }
         else {
-            match self.s.char_at(self.idx as usize) as u32 {
+            match SimpleStringScanner::char_at(&*self.s, self.idx as usize) as u32 {
                 0x0000u32...0x007Fu32 => self.idx += 1,
                 0x0080u32...0x07FFu32 => self.idx += 2,
                 0x0800u32...0xFFFFu32 => self.idx += 3,
@@ -189,7 +194,7 @@ fn can_be_token_start(c: char) -> bool {
         | '(' | '[' | '{' | ')'
         | ']' | '}' | '_' => true,
         '0'...'9' => true,
-        c if c.is_xid_start() => true,
+        c if UnicodeXID::is_xid_start(c) => true,
         _ => false
     }
 }
@@ -207,8 +212,11 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         else {
             self.err_recovery = true;
         }
+        // HACK ALERT! HACK ALERT! HACK ALERT! HACK ALERT!
+        // Borrow checker might disagree, but passing &self to a field that is FnMut is safe.
+        let this : &Lexer<S> = unsafe { &*(self as *mut _) };
         if let Some(ref mut callback) = self.err_fn {
-            callback(unsafe { &*(self as *mut _) }, err, pos)
+            callback(this, err, pos)
         }
     }
 
@@ -292,7 +300,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
                         c if c.is_whitespace() && look_for_lifetime => {
                             return true;
                         },
-                        c if !c.is_xid_continue() => {
+                        c if !UnicodeXID::is_xid_continue(c) => {
                             look_for_lifetime = false;
                             self.r.advance();
                         },
@@ -309,7 +317,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         debug_assert!(self.r.peek() == Some('x'));
         self.r.advance();
         let mut back_buffer = [0; 2];
-        for i in range(0, 2) {
+        for i in 0..2 {
             match self.r.peek() {
                 Some(c) if c.is_digit(16) => {
                     back_buffer[i] = c.to_digit(16).unwrap() as u8;
@@ -337,7 +345,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
             Some(_) => return Some((LexingError::MalformedEscapeSeq, self.r.current_position())),
         }
         let mut length = 0;
-        for i in range(0, 6) {
+        for i in 0..6 {
             match self.r.peek() {
                 Some('}') => {
                     length = i;
@@ -456,7 +464,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
     fn scan_ident_or_keyword_core<F:FnMut(char)>(&mut self, mut f: F) {
         loop {
             match self.r.peek() {
-                Some(x) if !x.is_xid_continue() => break,
+                Some(x) if !UnicodeXID::is_xid_continue(x) => break,
                 None => break,
                 Some(c) => {
                     f(c);
@@ -527,7 +535,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
                         let suffix = self.advance_float_from_fractional();
                         return (Token::FloatLiteral(suffix), self.r.current_position());
                     }
-                    c if c.is_xid_start() || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
+                    c if UnicodeXID::is_xid_start(c) || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
                         self.abandoned_char = Some('.');
                         return (Token::FloatLiteral(FloatLiteralSuffix::None), float_start);
                     },
@@ -564,7 +572,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         }
         match self.r.peek().unwrap() {
             'e' | 'E' => self.advance_float_from_exponent(),
-            c if c.is_xid_continue() => self.advance_float_suffix(),
+            c if UnicodeXID::is_xid_continue(c) => self.advance_float_suffix(),
             _ => return FloatLiteralSuffix::None,
         }
     }
@@ -581,7 +589,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         loop {
             match self.r.peek() {
                 Some(c) if (c >= '0' && c <= '9') || (!first && c == '_') => { },
-                Some(c) if c.is_xid_start() => break,
+                Some(c) if UnicodeXID::is_xid_start(c) => break,
                 _ => return FloatLiteralSuffix::None,
             }
             if first { first = false };
@@ -604,7 +612,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
 
     // no dot encountered, check suffix to disambiguate between int and float tokens
     fn advance_float_or_decimal_suffix(&mut self, suffix_start: u32) -> Token {
-        debug_assert!(self.r.peek().unwrap().is_xid_start());
+        debug_assert!(UnicodeXID::is_xid_start(self.r.peek().unwrap()));
         let mut length = 1;
         let mut back_buffer = [0u8; MAX_INT_SUFFIX_LENGTH]; // suffixes are ASCII
         {
@@ -615,7 +623,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         loop {
             self.r.advance();
             match self.r.peek() {
-                Some(c) if c.is_xid_continue() => {
+                Some(c) if UnicodeXID::is_xid_continue(c) => {
                     if c.is_ascii() && length < MAX_INT_SUFFIX_LENGTH {
                         back_buffer[length] = c as u8;
                         length += 1;
@@ -689,7 +697,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
                 let suffix = self.advance_float_from_exponent();
                 return (Token::FloatLiteral(suffix), self.r.current_position());
             },
-            c if c.is_xid_start() => {
+            c if UnicodeXID::is_xid_start(c) => {
                 let token = self.advance_float_or_decimal_suffix(float_start);
                 return (token, self.r.current_position());
             }
@@ -715,7 +723,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         }
         let suffix_start = self.r.current_position();
         match self.r.peek() {
-            Some(c) if c.is_xid_start() =>{
+            Some(c) if UnicodeXID::is_xid_start(c) =>{
                 if let Token::IntegerLiteral(_, suffix) = self.advance_float_or_decimal_suffix(suffix_start) {
                     suffix
                 }
@@ -935,7 +943,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
             '_' => {
                 self.r.advance();
                 match self.r.peek() {
-                    Some(x) if x.is_xid_continue() => self.scan_ident(),
+                    Some(x) if UnicodeXID::is_xid_continue(x) => self.scan_ident(),
                     _ => Token::Underscore
                 }
             },
@@ -965,7 +973,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
                 }
             },
             '1'...'9' => return Some(self.scan_float_or_decimal_integer()),
-            x if x.is_xid_start() => {
+            x if UnicodeXID::is_xid_start(x) => {
                 self.scan_ident_or_keyword(false)
             },
             _ => {
@@ -1030,7 +1038,6 @@ impl<'lexer, '_, S:StringScanner> Iterator for LexerIterator<'lexer, '_, S> {
 
 #[cfg(test)]
 mod test {
-    use std::cell::Cell;
     use super::{SimpleStringScanner, Lexer, LexingError};
     use super::token::{Token, StringLiteralKind};
 

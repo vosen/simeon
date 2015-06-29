@@ -1,6 +1,3 @@
-#![feature(box_syntax)]
-#![feature(core)]
-
 extern crate simeon;
 
 #[cfg(test)]

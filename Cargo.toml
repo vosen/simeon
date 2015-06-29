@@ -12,3 +12,6 @@ lto = false
 opt-level = 0
 debug = true
 lto = false
+
+[dependencies]
+unicode-xid = "0.0.1"
