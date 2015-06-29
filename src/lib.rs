@@ -7,9 +7,9 @@
 #![feature(collections)]
 #![feature(unsafe_no_drop_flag)]
 #![feature(libc)]
+#![feature(str_char)]
 
 extern crate core;
-extern crate libc;
 
 /*
  * Rust's lexical grammar is not unambiguous.
@@ -21,8 +21,6 @@ extern crate libc;
  * That's why we go with the second choice (and raise IllegalToken).
  */
 pub mod lexer;
-pub mod parser;
-pub mod ptr;
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
