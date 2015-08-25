@@ -105,6 +105,7 @@ pub enum FloatLiteralSuffix {
 pub enum Token {
     UnexpectedSequence,
     Whitespace,
+    Newline,
     DocComment,
     Comment,
     CharLiteral, // evaluates to char

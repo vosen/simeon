@@ -14,4 +14,4 @@ debug = true
 lto = false
 
 [dependencies]
-unicode-xid = "0.0.1"
+unicode-xid = "0.0.3"

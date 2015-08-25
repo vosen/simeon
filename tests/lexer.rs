@@ -40,14 +40,14 @@ mod lexer {
     lexer_test!(single_single_quote("'", [(Token::CharLiteral, (0, 1)) ]));
     lexer_test!(char_too_long("'ab'", [(Token::CharLiteral, (0, 4)) ]));
     lexer_test!(single_lifetime("'ab", [(Token::Lifetime, (0, 3)) ]));
-    lexer_test!(lifetime_newline("'ab\n", [(Token::Lifetime, (0, 3)), (Token::Whitespace, (3, 4)) ]));
+    lexer_test!(lifetime_newline("'ab\n", [(Token::Lifetime, (0, 3)), (Token::Newline, (3, 4)) ]));
     lexer_test!(keywords("continue as break", [(Token::Keyword(KeywordKind::Continue), (0, 8)),
                                                (Token::Whitespace, (8, 9)),
                                                (Token::Keyword(KeywordKind::As), (9, 11)),
                                                (Token::Whitespace, (11, 12)),
                                                (Token::Keyword(KeywordKind::Break), (12, 17))]));
     lexer_test!(doc_comm_line("///12345\r\noffsetof", [(Token::DocComment, (0, 8)),
-                                                       (Token::Whitespace, (8, 10)),
+                                                       (Token::Newline, (8, 10)),
                                                        (Token::Keyword(KeywordKind::Offsetof), (10, 18))]));
     lexer_test!(block_doc_comment("/ /** */", [(Token::BinOp(BinOpKind::Slash), (0, 1)),
                                                             (Token::Whitespace, (1, 2)),
@@ -75,6 +75,16 @@ mod lexer {
                                                   (Token::Eq, (8, 9)),
                                                   (Token::StringLiteral(_), (9, 14)),
                                                   (Token::RightBracket, (14, 15))]));
+    lexer_test!(newlines("\t\n \r\n   ", [(Token::Whitespace, (0, 1)),
+                                          (Token::Newline, (1, 2)),
+                                          (Token::Whitespace, (2, 3)),
+                                          (Token::Newline, (3, 5)),
+                                          (Token::Whitespace, (5, 8))]));
+    lexer_test!(newline_start("\r\n\t ", [(Token::Newline, (0, 2)),
+                                          (Token::Whitespace, (2, 4))]));
+    lexer_test!(abandon_char("12...13", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), (0, 2)),
+                                         (Token::DotDotDot, (2, 5)),
+                                         (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), (5, 7))]));
 
     mod error {
         use simeon::lexer::*;
@@ -89,12 +99,12 @@ mod lexer {
                     let mut tokens = Vec::new();
                     let last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
                     {
-                        let mut lexer = Lexer::new(scanner, Some(box |_, er, idx| {
+                        let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
                             if let Some(err_unwrapped) = last_error.get() {
                                 panic!("raised more than one error for a token. old: {:?}, new: {:?}", err_unwrapped, (er,idx));
                             }
                             last_error.set(Some((er,idx)));
-                        }));
+                        })));
                         for t in lexer.scan() {
                             tokens.push((t.0, last_error.get()));
                             last_error.set(None);
@@ -115,7 +125,7 @@ mod lexer {
             );
         }
 
-        lexer_test_errors!(lifetime_newline("'a\n", [(Token::Lifetime, None), (Token::Whitespace, None) ]));
+        lexer_test_errors!(lifetime_newline("'a\n", [(Token::Lifetime, None), (Token::Newline, None) ]));
         lexer_test_errors!(illegal_char("'a'b", [(Token::CharLiteral, None), (Token::Ident, Some((LexingError::IllegalToken, 3))) ]));
         lexer_test_errors!(single_single_quote("'", [(Token::CharLiteral, Some((LexingError::Eof, 1))) ]));
         lexer_test_errors!(char_too_long("'ab'", [(Token::CharLiteral, Some((LexingError::TokenTooLong, 0))) ]));
@@ -130,12 +140,12 @@ mod lexer {
         lexer_test_errors!(char_hex_escape_recover_from_unexpected("'\\xffz ", [(Token::CharLiteral, Some((LexingError::Eof, 7)))]));
         lexer_test_errors!(char_unicode_unterminated("'\\u{00} ", [(Token::CharLiteral, Some((LexingError::Eof, 8)))]));
         lexer_test_errors!(char_unescaped_newline("'\r\n'", [(Token::CharLiteral, Some((LexingError::UnescapedLiteral, 1))),
-                                                             (Token::Whitespace, None),
+                                                             (Token::Newline, None),
                                                              (Token::CharLiteral, Some((LexingError::Eof, 4)))    ]));
         lexer_test_errors!(char_unicode_dont_recover_on_whitespace("'\\u{00}z ", [(Token::CharLiteral, Some((LexingError::Eof, 9))) ]));
         lexer_test_errors!(char_unicode_empty("'\\u{}' ", [(Token::CharLiteral, Some((LexingError::MalformedEscapeSeq, 4))), (Token::Whitespace, None)  ]));
         lexer_test_errors!(byte_unescaped_newline("b'\n'", [(Token::ByteLiteral, Some((LexingError::UnescapedLiteral, 2))),
-                                                            (Token::Whitespace, None),
+                                                            (Token::Newline, None),
                                                             (Token::CharLiteral, Some((LexingError::Eof, 4))) ]));
         lexer_test_errors!(char_unescaped_char("'''", [(Token::CharLiteral, Some((LexingError::UnescapedLiteral, 1))) ]));
         lexer_test_errors!(illegal_int_suffix1("1i16usize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));

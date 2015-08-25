@@ -110,7 +110,7 @@ pub struct Lexer<'a, S:StringScanner> {
      * want StringScanner to be as simple as possible (it is implemented by the user)
      * at the cost of some messiness in the Lexer.
     */
-    abandoned_char: Option<char>,
+    abandoned_char: Option<(char, u32)>,
 }
 
 // Actual lexing
@@ -199,6 +199,10 @@ fn can_be_token_start(c: char) -> bool {
     }
 }
 
+fn is_single_char_newline(c: char) -> bool {
+    c == '\n' || c == '\u{0085}' || c == '\u{2028}' || c == '\u{2029}'
+}
+
 impl<'a, S:StringScanner> Lexer<'a, S> {
     fn on_error(&mut self, err: LexingError) {
         let curr_pos = self.r.current_position();
@@ -220,15 +224,49 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         }
     }
 
-    fn scan_whitespace(&mut self) -> Token {
-        loop {
-            self.r.advance();
-            match self.r.peek() {
-                Some(c) => if !c.is_whitespace() { break; },
-                None => { break; }
+    fn advance_long_newline(&mut self, c: char) -> bool {
+        if c == '\r' {
+            self.advance_abandoned();
+            if self.r.peek() == Some('\n') {
+                return true;
             }
         }
-        return Token::Whitespace;
+        false
+    }
+
+    fn scan_whitespace(&mut self, c: char) -> (Token, u32) {
+        if is_single_char_newline(c) {
+            self.r.advance();
+            return (Token::Newline, self.r.current_position());
+        }
+        else if self.advance_long_newline(c) {
+            self.r.advance();
+            return (Token::Newline, self.r.current_position());
+        }
+        else {            
+            self.r.advance();
+        }
+        loop {
+            let last = self.r.current_position();
+            match self.r.peek() {
+                Some(c) => {
+                    if !c.is_whitespace() || is_single_char_newline(c) {
+                        break;
+                    }
+                    let curr = self.r.current_position();
+                    if self.advance_long_newline(c) {
+                        self.abandon_char('\r', last);
+                        return (Token::Whitespace, curr)
+                    }
+                    else if c == '\r' {
+                        continue;
+                    }
+                }
+                None => { break; }
+            }
+            self.r.advance();
+        }
+        (Token::Whitespace, self.r.current_position())
     }
 
     fn advance_literal_or_lifetime(&mut self, c_end: char, allow_unicode: bool, mut look_for_lifetime: bool) -> bool {
@@ -526,6 +564,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
     }
 
     fn advance_float_from_dot(&mut self, float_start: u32) -> (Token, u32) {
+        let prev = self.r.current_position();
         self.r.advance();
         match self.r.peek() {
             None => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
@@ -536,8 +575,8 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
                         return (Token::FloatLiteral(suffix), self.r.current_position());
                     }
                     c if UnicodeXID::is_xid_start(c) || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
-                        self.abandoned_char = Some('.');
-                        return (Token::FloatLiteral(FloatLiteralSuffix::None), float_start);
+                        self.abandon_char('.', prev);
+                        return (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), float_start);
                     },
                     _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
                 }
@@ -741,18 +780,23 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         t
     }
 
+    fn abandon_char(&mut self, c: char, pos: u32) {
+        debug_assert!(self.abandoned_char.is_none());
+        self.abandoned_char = Some((c, pos));
+    }
+
     fn peek_abandoned(&mut self) -> Option<char> {
-        if let Some(c) = self.abandoned_char { Some(c) }
+        if let Some((c,_)) = self.abandoned_char { Some(c) }
         else { self.r.peek() }
     }
 
     fn advance_abandoned(&mut self) {
-        if self.abandoned_char.is_none() { self.abandoned_char = None }
+        if self.abandoned_char.is_some() { self.abandoned_char = None }
         else { self.r.advance() }
     }
 
     fn scan_token(&mut self) -> Option<(Token, Span)> {
-        let start = self.r.current_position();
+        let start = self.abandoned_char.map(|(_, pos)| pos).unwrap_or_else(|| self.r.current_position());
         let result = self.scan_token_inner();
         self.err_recovery = false;
         return result.map(|(token, end)| (token, Span { start: start, end: end }));
@@ -765,7 +809,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         }
         let curr = curr.unwrap();
         if curr.is_whitespace() {
-            return Some((self.scan_whitespace(), self.r.current_position()));
+            return Some(self.scan_whitespace(curr));
         }
         let token = match curr {
             '"' => {
@@ -1054,7 +1098,7 @@ mod test {
 
     #[test]
     fn lex_whitespace() {
-        let text = "   \t \n \r";
+        let text = "   \t \r \r";
         let mut lexer = prepare_lexer(text.to_string());
         let span_opt = lexer.scan_token();
         assert!(span_opt.is_some());
