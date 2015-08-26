@@ -85,6 +85,9 @@ mod lexer {
     lexer_test!(abandon_char("12...13", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), (0, 2)),
                                          (Token::DotDotDot, (2, 5)),
                                          (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), (5, 7))]));
+    lexer_test!(simple_ident_r("r", [(Token::Ident, (0, 1))]));
+    lexer_test!(simple_ident_br("br", [(Token::Ident, (0, 2))]));
+    lexer_test!(byte_raw_literal("br##\"aadss\"##", [(Token::ByteStringLiteral(StringLiteralKind::Raw), (0, 13))]));
 
     mod error {
         use simeon::lexer::*;
@@ -152,5 +155,12 @@ mod lexer {
         lexer_test_errors!(illegal_int_suffix2("1a16usize", [(Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 1))) ]));
         lexer_test_errors!(mismatched_int_suffix("0b1f64", [(Token::IntegerLiteral(IntegerLiteralBase::Binary, IntegerLiteralSuffix::None), Some((LexingError::IllegalSuffix, 3))) ]));
         lexer_test_errors!(mismatched_float_suffix("0.1u32", [(Token::FloatLiteral(FloatLiteralSuffix::None), Some((LexingError::IllegalSuffix, 3))) ]));
+        lexer_test_errors!(raw_literal_no_quotes("r#asdf", [(Token::StringLiteral(StringLiteralKind::Raw), Some((LexingError::MissingQuote, 2))),
+                                                            (Token::Ident, None) ]));
+        lexer_test_errors!(raw_literal_eof("r\"asdf", [(Token::StringLiteral(StringLiteralKind::Raw), Some((LexingError::Eof, 6))) ]));
+        lexer_test_errors!(raw_unbalanced_hash_less("r##\"asdf\"# ", [(Token::StringLiteral(StringLiteralKind::Raw), Some((LexingError::UnbalancedRawLiteral, 10))),
+                                                                      (Token::Whitespace, None) ]));
+        lexer_test_errors!(raw_unbalanced_hash_more("r#\"asdf\"## ", [(Token::StringLiteral(StringLiteralKind::Raw), Some((LexingError::UnbalancedRawLiteral, 10))),
+                                                                      (Token::Whitespace, None) ]));
     }
 }

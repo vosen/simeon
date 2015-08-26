@@ -1,7 +1,7 @@
 #[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]
 pub enum StringLiteralKind {
     Normal,
-    //Raw,
+    Raw,
 }
 
 #[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]

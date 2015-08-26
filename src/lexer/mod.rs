@@ -33,7 +33,9 @@ pub enum LexingError {
     UnescapedLiteral, // byte and char literals don't allow unescaped ', \t, \n, \r
     MalformedLiteral, // for things like `0b ` or `0b9`
     IllegalSuffix, // for illegal integer suffixes: things like `1i16usize`
-    MalformedExponent // for broken exponent in floats: eg. `12e` or `12E!1`
+    MalformedExponent, // for broken exponent in floats: eg. `12e` or `12E!1`
+    MissingQuote, // for raw literals that miss their quotation marks: eg. r###asd 
+    UnbalancedRawLiteral, // for raw literals with wrong number of hash sings: eg. r###"asdf"#
 }
 
 pub struct SimpleStringScanner {
@@ -519,13 +521,12 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
 
     // this function can be called after we've eaten single 'b' char,
     // that's why this weird flag is here
-    fn scan_ident_or_keyword(&mut self, prepend_b: bool) -> Token {
+    fn scan_ident_or_keyword(&mut self, prepend: &'static str) -> Token {
         let mut back_buffer = [0u8; MAX_KEYWORD_LENGTH]; // all keywords are ASCII
-        let mut length = 0;
-        if prepend_b {
-            back_buffer[0] = b'b';
-            length += 1;
+        for (idx, b) in prepend.bytes().enumerate() {
+            back_buffer[idx] = b;
         }
+        let mut length = prepend.len();
         self.scan_ident_or_keyword_core(|c| {
             if length <= MAX_KEYWORD_LENGTH {
                 if c.is_ascii() {
@@ -802,6 +803,33 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         return result.map(|(token, end)| (token, Span { start: start, end: end }));
     }
 
+    fn scan_raw_literal(&mut self) {
+        let mut hash_count = 0;
+        loop {
+            if self.r.peek() != Some('#') { break; }
+            self.r.advance();
+            hash_count += 1;
+        }
+        match self.r.peek() {
+            Some(c) if c != '"' => {
+                return self.on_error(LexingError::MissingQuote);
+            }
+            None => {
+                return self.on_error(LexingError::Eof);
+            }
+            Some(_) => { }
+        }
+        self.advance_literal_or_lifetime('"', true, false);
+        loop {
+            if self.r.peek() != Some('#') { break; }
+            self.r.advance();
+            hash_count -= 1;
+        }
+        if hash_count != 0 {
+            self.on_error(LexingError::UnbalancedRawLiteral);
+        }
+    }
+
     fn scan_token_inner(&mut self) -> Option<(Token, u32)> {
         let curr = self.peek_abandoned();
         if curr.is_none() {
@@ -819,20 +847,6 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
             '\'' => {
                 let is_lifetime = self.advance_literal_or_lifetime('\'', true, true);
                 if is_lifetime { Token::Lifetime } else { Token::CharLiteral }
-            },
-            'b' => {
-                self.r.advance();
-                match self.r.peek() {
-                    Some('\'') => {
-                        self.advance_literal_or_lifetime('\'', false, false);
-                        Token::ByteLiteral
-                    },
-                    Some('"') => {
-                        self.advance_literal_or_lifetime('"', false, false);
-                        Token::ByteStringLiteral(StringLiteralKind::Normal)
-                    },
-                    Some(_) | None => self.scan_ident_or_keyword(true)
-                }
             },
             '=' => {
                 self.r.advance();
@@ -1017,8 +1031,42 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
                 }
             },
             '1'...'9' => return Some(self.scan_float_or_decimal_integer()),
+            'b' => {
+                self.r.advance();
+                match self.r.peek() {
+                    Some('r') => {
+                        self.r.advance();
+                        match self.r.peek() {
+                            Some('#') | Some('"') => {
+                                self.scan_raw_literal();
+                                Token::ByteStringLiteral(StringLiteralKind::Raw)
+                            }
+                            _ => self.scan_ident_or_keyword("br")
+                        }
+                    }
+                    Some('\'') => {
+                        self.advance_literal_or_lifetime('\'', false, false);
+                        Token::ByteLiteral
+                    },
+                    Some('"') => {
+                        self.advance_literal_or_lifetime('"', false, false);
+                        Token::ByteStringLiteral(StringLiteralKind::Normal)
+                    },
+                    Some(_) | None => self.scan_ident_or_keyword("b")
+                }
+            },
+            'r' => {
+                self.r.advance();
+                match self.r.peek() {
+                    Some('#') | Some('"') => {
+                        self.scan_raw_literal();
+                        Token::StringLiteral(StringLiteralKind::Raw)
+                    }
+                    _ => self.scan_ident_or_keyword("")
+                }
+            },
             x if UnicodeXID::is_xid_start(x) => {
-                self.scan_ident_or_keyword(false)
+                self.scan_ident_or_keyword("")
             },
             _ => {
                 loop {
