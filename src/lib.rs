@@ -1,3 +1,4 @@
+extern crate libc;
 extern crate unicode_xid;
 
 /*
@@ -10,6 +11,7 @@ extern crate unicode_xid;
  * That's why we go with the second choice (and raise IllegalToken).
  */
 pub mod lexer;
+pub mod raw;
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Copy, Debug, Clone, Hash)]

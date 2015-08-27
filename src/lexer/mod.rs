@@ -6,7 +6,6 @@ use unicode_xid::UnicodeXID;
 pub mod token;
 
 pub trait StringScanner : Send {
-    // returns eof: \u0003 at the end of the text
     fn advance(&mut self);
     fn peek(&self) -> Option<char>;
     fn current_position(&self) -> u32;
