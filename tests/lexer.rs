@@ -12,7 +12,7 @@ mod lexer {
                 let text = $text;
                 let scanner = SimpleStringScanner::new(text.to_string());
                 let mut tokens = Vec::new();
-                let mut lexer = Lexer::new(scanner, None);
+                let lexer = Lexer::new(scanner, None);
                 for t in lexer.scan() {
                     tokens.push(t);
                 }
@@ -102,7 +102,7 @@ mod lexer {
                     let mut tokens = Vec::new();
                     let last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
                     {
-                        let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
+                        let lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
                             if let Some(err_unwrapped) = last_error.get() {
                                 panic!("raised more than one error for a token. old: {:?}, new: {:?}", err_unwrapped, (er,idx));
                             }

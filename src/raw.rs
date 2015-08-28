@@ -2,8 +2,10 @@ use libc::{c_void, uint8_t, uint32_t};
 use std::mem;
 use std::char;
 
-use lexer::{Lexer, StringScanner};
+use lexer::{Lexer, StringScanner, LexerIterator};
 use lexer::token::Token;
+
+use Span;
 
 #[repr(u8)]
 pub enum RawToken {
@@ -60,11 +62,20 @@ pub enum RawToken {
 
 #[repr(C)]
 /// Result returned by the scanning function
-pub struct ScannerResult {
+pub struct ScannerResult { 
+    /// Size of the scanned character in bytes, should be set to 0 in case of EOF
+    pub length: uint8_t,
     /// Four byte unicode representation of the parsed character
     pub char: uint32_t,
-    /// Size of the scanned character in bytes, should be set to 0 in case of EOF
-    pub length: uint8_t
+}
+
+#[repr(C)]
+/// Result returned by the lexing function
+pub struct LexerResult {
+    /// Span of the parsed token
+    pub span: Span,
+    /// Parsed token 
+    pub token: RawToken,
 }
 
 struct FFIScanner {
@@ -82,16 +93,16 @@ impl StringScanner for FFIScanner {
     fn advance(&mut self) {
         let result = (self.scanner)(self.scanner_state);
         if result.length > 0 {
-        	self.curr_char = Some(result.char);
-        	self.curr_pos += result.length as u32;
+            self.curr_char = Some(result.char);
+            self.curr_pos += result.length as u32;
         }
         else {
-        	self.curr_char = None;
+            self.curr_char = None;
         }
     }
 
     fn peek(&self) -> Option<char> {
-    	self.curr_char.map(|ch| char::from_u32(ch).unwrap_or('\u{fffd}'))
+        self.curr_char.map(|ch| char::from_u32(ch).unwrap_or('\u{fffd}'))
     }
     
     fn current_position(&self) -> u32 {
@@ -102,79 +113,85 @@ impl StringScanner for FFIScanner {
 #[no_mangle]
 pub extern fn simeon_lexer_init(scanner: fn(*mut c_void) -> ScannerResult,
                                 scanner_state: *mut c_void) -> *mut c_void {
-	let mut scanner = FFIScanner {
+    let mut scanner = FFIScanner {
         scanner: scanner,
         scanner_state: scanner_state,
         curr_char: None,
         curr_pos: 0
     };
     scanner.advance();
-    unsafe { mem::transmute(Box::new(Lexer::new(scanner, None))) }
+    unsafe { mem::transmute(Box::new(Lexer::new(scanner, None).scan())) }
 }
 
 #[no_mangle]
-pub extern fn simeon_lexer_next(lexer: *mut c_void) -> RawToken {
-    let lexer = unsafe { mem::transmute::<_, &Lexer<FFIScanner>>(lexer) };
-    unimplemented!()
+pub extern fn simeon_lexer_next(lexer: *mut c_void) -> LexerResult {
+    let mut iter = unsafe { mem::transmute::<_, &mut LexerIterator<FFIScanner>>(lexer) };
+    match iter.next() {
+        None => LexerResult {
+            span: Span { start: 0, end: 0 },
+            token: RawToken::Eof
+        },
+        Some((token, span)) => LexerResult {
+            span: span,
+            token: convert_token(token)
+        }
+    }
 }
 
 #[no_mangle]
 pub extern fn simeon_lexer_free(lexer: *mut c_void) {
-    drop(unsafe { mem::transmute::<_, Box<Lexer<FFIScanner>>>(lexer) })
+    drop(unsafe { mem::transmute::<_, Box<LexerIterator<FFIScanner>>>(lexer) })
 }
 
-fn convert_token(token: Option<Token>) -> RawToken {
+fn convert_token(token: Token) -> RawToken {
     match token {
-        None => RawToken::Eof,
-        Some(token) => match token {
-            Token::UnexpectedSequence => RawToken::UnexpectedSequence,
-            Token::Whitespace => RawToken::Whitespace,
-            Token::Newline => RawToken::Newline,
-            Token::DocComment => RawToken::DocComment,
-            Token::Comment => RawToken::Comment,
-            Token::CharLiteral => RawToken::CharLiteral,
-            Token::StringLiteral(..) => RawToken::StringLiteral,
-            Token::ByteLiteral => RawToken::ByteLiteral,
-            Token::ByteStringLiteral(..) => RawToken::ByteStringLiteral,
-            Token::Ident => RawToken::Ident,
-            Token::Eq => RawToken::Eq,
-            Token::Lt => RawToken::Lt,
-            Token::Le => RawToken::Le,
-            Token::EqEq => RawToken::EqEq,
-            Token::Ne => RawToken::Ne,
-            Token::Ge => RawToken::Ge,
-            Token::Gt => RawToken::Gt,
-            Token::AndAnd => RawToken::AndAnd,
-            Token::OrOr => RawToken::OrOr,
-            Token::Not => RawToken::Not,
-            Token::Tilde => RawToken::Tilde,
-            Token::BinOp(..) => RawToken::BinOp,
-            Token::BinOpEq(..) => RawToken::BinOpEq,
-            Token::At => RawToken::At,
-            Token::Dot => RawToken::Dot,
-            Token::DotDot => RawToken::DotDot,
-            Token::DotDotDot => RawToken::DotDotDot,
-            Token::Comma => RawToken::Comma,
-            Token::Semi => RawToken::Semi,
-            Token::Colon => RawToken::Colon,
-            Token::ModSep => RawToken::ModSep,
-            Token::RightArrow => RawToken::RightArrow,
-            Token::LeftArrow => RawToken::LeftArrow,
-            Token::FatArrow => RawToken::FatArrow,
-            Token::Pound => RawToken::Pound,
-            Token::Dollar => RawToken::Dollar,
-            Token::Question => RawToken::Question,
-            Token::LeftParen => RawToken::LeftParen,
-            Token::LeftBracket => RawToken::LeftBracket,
-            Token::LeftBrace => RawToken::LeftBrace,
-            Token::RightParen => RawToken::RightParen,
-            Token::RightBracket => RawToken::RightBracket,
-            Token::RightBrace => RawToken::RightBrace,
-            Token::Underscore => RawToken::Underscore,
-            Token::Lifetime => RawToken::Lifetime,
-            Token::Keyword(..) => RawToken::Keyword,
-            Token::IntegerLiteral(..) => RawToken::IntegerLiteral,
-            Token::FloatLiteral(..) => RawToken::FloatLiteral,
-        }
+        Token::UnexpectedSequence => RawToken::UnexpectedSequence,
+        Token::Whitespace => RawToken::Whitespace,
+        Token::Newline => RawToken::Newline,
+        Token::DocComment => RawToken::DocComment,
+        Token::Comment => RawToken::Comment,
+        Token::CharLiteral => RawToken::CharLiteral,
+        Token::StringLiteral(..) => RawToken::StringLiteral,
+        Token::ByteLiteral => RawToken::ByteLiteral,
+        Token::ByteStringLiteral(..) => RawToken::ByteStringLiteral,
+        Token::Ident => RawToken::Ident,
+        Token::Eq => RawToken::Eq,
+        Token::Lt => RawToken::Lt,
+        Token::Le => RawToken::Le,
+        Token::EqEq => RawToken::EqEq,
+        Token::Ne => RawToken::Ne,
+        Token::Ge => RawToken::Ge,
+        Token::Gt => RawToken::Gt,
+        Token::AndAnd => RawToken::AndAnd,
+        Token::OrOr => RawToken::OrOr,
+        Token::Not => RawToken::Not,
+        Token::Tilde => RawToken::Tilde,
+        Token::BinOp(..) => RawToken::BinOp,
+        Token::BinOpEq(..) => RawToken::BinOpEq,
+        Token::At => RawToken::At,
+        Token::Dot => RawToken::Dot,
+        Token::DotDot => RawToken::DotDot,
+        Token::DotDotDot => RawToken::DotDotDot,
+        Token::Comma => RawToken::Comma,
+        Token::Semi => RawToken::Semi,
+        Token::Colon => RawToken::Colon,
+        Token::ModSep => RawToken::ModSep,
+        Token::RightArrow => RawToken::RightArrow,
+        Token::LeftArrow => RawToken::LeftArrow,
+        Token::FatArrow => RawToken::FatArrow,
+        Token::Pound => RawToken::Pound,
+        Token::Dollar => RawToken::Dollar,
+        Token::Question => RawToken::Question,
+        Token::LeftParen => RawToken::LeftParen,
+        Token::LeftBracket => RawToken::LeftBracket,
+        Token::LeftBrace => RawToken::LeftBrace,
+        Token::RightParen => RawToken::RightParen,
+        Token::RightBracket => RawToken::RightBracket,
+        Token::RightBrace => RawToken::RightBrace,
+        Token::Underscore => RawToken::Underscore,
+        Token::Lifetime => RawToken::Lifetime,
+        Token::Keyword(..) => RawToken::Keyword,
+        Token::IntegerLiteral(..) => RawToken::IntegerLiteral,
+        Token::FloatLiteral(..) => RawToken::FloatLiteral,
     }
 }

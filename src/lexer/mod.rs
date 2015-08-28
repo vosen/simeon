@@ -8,7 +8,7 @@ pub mod token;
 pub trait StringScanner : Send {
     fn advance(&mut self);
     fn peek(&self) -> Option<char>;
-    fn current_position(&self) -> u32;
+    fn current_position(&self)-> u32;
     fn next(&mut self) -> Option<char> {
         let val = self.peek();
         self.advance();
@@ -1082,17 +1082,17 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         Some((token, self.r.current_position()))
     }
 
-    pub fn scan<'lexer>(&'lexer mut self) -> LexerIterator<'lexer, 'a, S>  {
+    pub fn scan(self) -> LexerIterator<'a, S>  {
         LexerIterator { lexer: self, seen_char: false }
     }
 }
 
-pub struct LexerIterator<'lexer, 'e:'lexer, S:StringScanner+'lexer> {
-    lexer: &'lexer mut Lexer<'e, S>,
+pub struct LexerIterator<'e:, S:StringScanner> {
+    lexer: Lexer<'e, S>,
     seen_char: bool
 }
 
-impl<'lexer, '_, S:StringScanner> LexerIterator<'lexer, '_, S> {
+impl<'_, S:StringScanner> LexerIterator<'_, S> {
     fn raise_error_on_illegal_token(&mut self, result: Option<(Token, Span)>) {
         if self.seen_char { 
             if let Some((Token::Ident, ident_span)) = result {
@@ -1115,7 +1115,7 @@ impl<'lexer, '_, S:StringScanner> LexerIterator<'lexer, '_, S> {
     }
 }
 
-impl<'lexer, '_, S:StringScanner> Iterator for LexerIterator<'lexer, '_, S> {
+impl<'_, S:StringScanner> Iterator for LexerIterator<'_, S> {
     type Item = (Token, Span);
 
     // Most of this code is proper error handling of 'a'b
