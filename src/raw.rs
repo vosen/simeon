@@ -1,10 +1,9 @@
-use libc::{c_void, uint8_t, uint32_t};
+use libc::c_void;
 use std::mem;
-use std::char;
+use std::slice;
 
-use lexer::{Lexer, StringScanner, LexerIterator};
+use lexer::{Lexer, Scanner, LexerIterator};
 use lexer::token::Token;
-
 use Span;
 
 #[repr(u8)]
@@ -61,15 +60,6 @@ pub enum RawToken {
 }
 
 #[repr(C)]
-/// Result returned by the scanning function
-pub struct ScannerResult { 
-    /// Size of the scanned character in bytes, should be set to 0 in case of EOF
-    pub length: uint8_t,
-    /// Four byte unicode representation of the parsed character
-    pub char: uint32_t,
-}
-
-#[repr(C)]
 /// Result returned by the lexing function
 pub struct LexerResult {
     /// Span of the parsed token
@@ -78,54 +68,74 @@ pub struct LexerResult {
     pub token: RawToken,
 }
 
-struct FFIScanner {
-    scanner: fn(*mut c_void) -> ScannerResult,
-    scanner_state: *mut c_void,
-    curr_char: Option<u32>,
-    curr_pos: u32,
+struct UTF16Scanner<'a> {
+    idx: u32,
+    arr: &'a [u16],
 }
 
-// Only because c_void is not Send
-unsafe impl Send for FFIScanner {}
-
-
-impl StringScanner for FFIScanner {
-    fn advance(&mut self) {
-        let result = (self.scanner)(self.scanner_state);
-        if result.length > 0 {
-            self.curr_char = Some(result.char);
-            self.curr_pos += result.length as u32;
-        }
-        else {
-            self.curr_char = None;
+impl<'a> UTF16Scanner<'a> {
+    fn new(buffer: *const u16, len: usize) -> UTF16Scanner<'a> {
+        UTF16Scanner {
+            idx: 0,
+            arr: unsafe { slice::from_raw_parts(buffer, len) }
         }
     }
 
-    fn peek(&self) -> Option<char> {
-        self.curr_char.map(|ch| char::from_u32(ch).unwrap_or('\u{fffd}'))
+    // copied from rustc_unicode
+    fn char_at(&self, i: usize) -> Option<char> {
+        let u = match self.arr.get(i) {
+            Some(u) => *u,
+            None => return None
+        };
+        if u < 0xD800 || 0xDFFF < u {
+            Some(unsafe {mem::transmute(u as u32)})
+        } else if u >= 0xDC00 {
+            Some('\u{fffd}')
+        } else {
+            let u2 = match self.arr.get(i + 1) {
+                Some(u2) => *u2,
+                None => return Some('\u{fffd}')
+            };
+            if u2 < 0xDC00 || u2 > 0xDFFF {
+                return Some('\u{fffd}');
+            }
+            let c = (((u - 0xD800) as u32) << 10 | (u2 - 0xDC00) as u32) + 0x1_0000;
+            Some(unsafe {mem::transmute(c)})
+        }
+    }
+}
+
+impl<'a> Scanner for UTF16Scanner<'a> {
+    fn advance(&mut self) {
+        match self.char_at(self.idx as usize) {
+            None => {},
+            Some(c) => self.idx += c.len_utf16() as u32
+        }
+    }
+
+    fn peek(&mut self) -> Option<char> {
+        self.char_at(self.idx as usize)
+    }
+
+    fn peek2(&mut self) -> Option<char> {
+        self.char_at(self.idx as usize)
+            .and_then(|c| self.char_at(self.idx as usize + c.len_utf16()))
     }
     
     fn current_position(&self) -> u32 {
-        self.curr_pos
+        self.idx
     }
 }
 
 #[no_mangle]
-pub extern fn simeon_lexer_init(scanner: fn(*mut c_void) -> ScannerResult,
-                                scanner_state: *mut c_void) -> *mut c_void {
-    let mut scanner = FFIScanner {
-        scanner: scanner,
-        scanner_state: scanner_state,
-        curr_char: None,
-        curr_pos: 0
-    };
-    scanner.advance();
+pub extern fn simeon_lexer_init(buffer: *const u16, len: usize) -> *mut c_void {
+    let scanner = UTF16Scanner::new(buffer, len);
     unsafe { mem::transmute(Box::new(Lexer::new(scanner, None).scan())) }
 }
 
 #[no_mangle]
 pub extern fn simeon_lexer_next(lexer: *mut c_void) -> LexerResult {
-    let mut iter = unsafe { mem::transmute::<_, &mut LexerIterator<FFIScanner>>(lexer) };
+    let mut iter = unsafe { mem::transmute::<_, &mut LexerIterator<UTF16Scanner>>(lexer) };
     match iter.next() {
         None => LexerResult {
             span: Span { start: 0, end: 0 },
@@ -140,7 +150,7 @@ pub extern fn simeon_lexer_next(lexer: *mut c_void) -> LexerResult {
 
 #[no_mangle]
 pub extern fn simeon_lexer_free(lexer: *mut c_void) {
-    drop(unsafe { mem::transmute::<_, Box<LexerIterator<FFIScanner>>>(lexer) })
+    drop(unsafe { mem::transmute::<_, Box<LexerIterator<UTF16Scanner>>>(lexer) })
 }
 
 fn convert_token(token: Token) -> RawToken {

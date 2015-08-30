@@ -49,8 +49,8 @@ impl<'a> SliceScanner<'a> {
         }
     }
 
-    fn char_at(s: &str, i: usize) -> char {
-        s[i..].chars().next().unwrap()
+    fn char_at(&self, i: usize) -> char {
+        self.s[i..].chars().next().unwrap()
     }
 
     fn is_eof(&self, idx: u32) -> bool { (idx as usize) >= self.s.len() }
@@ -59,7 +59,7 @@ impl<'a> SliceScanner<'a> {
             None
         }
         else {
-            Some(SliceScanner::char_at(self.s, idx as usize))
+            Some(self.char_at(idx as usize))
         }
     }
 }
@@ -79,7 +79,7 @@ impl<'a> Scanner for SliceScanner<'a> {
             panic!("Can't advance beyond the scanned string");
         }
         else {
-            let len = SliceScanner::char_at(self.s, self.idx as usize).len_utf8();
+            let len = self.char_at(self.idx as usize).len_utf8();
             self.idx += len as u32;
         }
     }
