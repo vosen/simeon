@@ -10,7 +10,7 @@ mod lexer {
             #[test]
             fn $name() {
                 let text = $text;
-                let scanner = SimpleStringScanner::new(text.to_string());
+                let scanner = SliceScanner::new(text);
                 let mut tokens = Vec::new();
                 let lexer = Lexer::new(scanner, None);
                 for t in lexer.scan() {
@@ -98,7 +98,7 @@ mod lexer {
                 #[test]
                 fn $name() {
                     let text = $text;
-                    let scanner = SimpleStringScanner::new(text.to_string());
+                    let scanner = SliceScanner::new(text);
                     let mut tokens = Vec::new();
                     let last_error : ::std::cell::Cell<Option<(LexingError, u32)>> = ::std::cell::Cell::new(None);
                     {

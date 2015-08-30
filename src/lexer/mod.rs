@@ -5,15 +5,11 @@ use unicode_xid::UnicodeXID;
 
 pub mod token;
 
-pub trait StringScanner : Send {
+pub trait Scanner {
     fn advance(&mut self);
-    fn peek(&self) -> Option<char>;
+    fn peek(&mut self) -> Option<char>;
+    fn peek2(&mut self) -> Option<char>;
     fn current_position(&self)-> u32;
-    fn next(&mut self) -> Option<char> {
-        let val = self.peek();
-        self.advance();
-        return val;
-    }
 }
 
 const MAX_KEYWORD_LENGTH: usize = 8;
@@ -37,17 +33,17 @@ pub enum LexingError {
     UnbalancedRawLiteral, // for raw literals with wrong number of hash sings: eg. r###"asdf"#
 }
 
-pub struct SimpleStringScanner {
+pub struct SliceScanner<'a> {
     idx: u32,
-    s: String,
+    s: &'a str,
 }
 
-impl SimpleStringScanner {
-    pub fn new(s: String) -> SimpleStringScanner {
+impl<'a> SliceScanner<'a> {
+    pub fn new(s: &'a str) -> SliceScanner {
         if ::std::mem::size_of::<usize>() < 4 || s.len() > (::std::u32::MAX as usize) {
             panic!();
         }
-        SimpleStringScanner {
+        SliceScanner {
             idx: 0,
             s: s
         }
@@ -57,26 +53,25 @@ impl SimpleStringScanner {
         s[i..].chars().next().unwrap()
     }
 
-    // this fn is mostly for debugging
-    #[allow(deprecated)]
-    pub fn slice_at(&self, sp: Span) -> &str {
-        &self.s[sp.start as usize..sp.end as usize]
-    }
-
     fn is_eof(&self, idx: u32) -> bool { (idx as usize) >= self.s.len() }
     fn peek_to(&self, idx: u32) -> Option<char> {
         if self.is_eof(idx) {
             None
         }
         else {
-            Some(SimpleStringScanner::char_at(&*self.s, idx as usize))
+            Some(SliceScanner::char_at(self.s, idx as usize))
         }
     }
 }
 
-impl StringScanner for SimpleStringScanner {
-    fn peek(&self) -> Option<char> {
+impl<'a> Scanner for SliceScanner<'a> {
+    fn peek(&mut self) -> Option<char> {
         self.peek_to(self.idx)
+    }
+
+    fn peek2(&mut self) -> Option<char> {
+        self.peek_to(self.idx)
+            .and_then(|c| self.peek_to(self.idx + c.len_utf8() as u32))
     }
 
     fn advance(&mut self) {
@@ -84,13 +79,8 @@ impl StringScanner for SimpleStringScanner {
             panic!("Can't advance beyond the scanned string");
         }
         else {
-            match SimpleStringScanner::char_at(&*self.s, self.idx as usize) as u32 {
-                0x0000u32...0x007Fu32 => self.idx += 1,
-                0x0080u32...0x07FFu32 => self.idx += 2,
-                0x0800u32...0xFFFFu32 => self.idx += 3,
-                0x10000u32...0xFFFFFFFFu32 => self.idx += 4,
-                _ => panic!("rustc error"),
-            }
+            let len = SliceScanner::char_at(self.s, self.idx as usize).len_utf8();
+            self.idx += len as u32;
         }
     }
 
@@ -98,26 +88,20 @@ impl StringScanner for SimpleStringScanner {
         self.idx
     }
 }
-pub struct Lexer<'a, S:StringScanner> {
+pub struct Lexer<'a, S:Scanner> {
     r: S,
     err_fn: Option<Box<for<'b> FnMut(&'b Lexer<S>, LexingError, u32)+'a>>,
     err_recovery: bool, // set to true during first lexing error in a token
-    /*
-     * Lexing float literal tokens require two chars lookahead
-     * eg. when lexing `12...13` we start by entering lexing rule for integer literals
-     * and after consuming the dot we have to abandon it and on the next call to the iterator
-     * restart from this abandoned dot.
-     * We could solve this by forcing StringScanner to provide us with two-tokens lookahead but I
-     * want StringScanner to be as simple as possible (it is implemented by the user)
-     * at the cost of some messiness in the Lexer.
-    */
-    abandoned_char: Option<(char, u32)>,
 }
 
 // Actual lexing
-impl<'a, S:StringScanner> Lexer<'a, S> {
+impl<'a, S:Scanner> Lexer<'a, S> {
     pub fn new(scanner: S, err_handler:Option<Box<FnMut(&Lexer<S>, LexingError, u32)+'a>>) -> Lexer<'a, S> {
-        Lexer { r:scanner, err_fn: err_handler, err_recovery: false, abandoned_char: None }
+        Lexer { 
+            r:scanner,
+            err_fn: err_handler,
+            err_recovery: false
+        }
     }
 
     pub fn scanner(&self) -> &S {
@@ -204,7 +188,7 @@ fn is_single_char_newline(c: char) -> bool {
     c == '\n' || c == '\u{0085}' || c == '\u{2028}' || c == '\u{2029}'
 }
 
-impl<'a, S:StringScanner> Lexer<'a, S> {
+impl<'a, S:Scanner> Lexer<'a, S> {
     fn on_error(&mut self, err: LexingError) {
         let curr_pos = self.r.current_position();
         self.on_error_at(err, curr_pos)
@@ -225,49 +209,43 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         }
     }
 
-    fn advance_long_newline(&mut self, c: char) -> bool {
-        if c == '\r' {
-            self.advance_abandoned();
-            if self.r.peek() == Some('\n') {
-                return true;
-            }
+    fn peek_two_char_newline(&mut self, c: char) -> bool {
+        c == '\r' && self.r.peek2() == Some('\n')
+    }
+
+    fn peek_newline(&mut self, c: char) -> bool {
+        is_single_char_newline(c) || self.peek_two_char_newline(c)
+    }
+
+    fn advance_newline(&mut self, c: char) -> bool {
+        if is_single_char_newline(c) {
+            self.r.advance();
+            return true;
+        }
+        if self.peek_two_char_newline(c) {
+            self.r.advance();
+            self.r.advance();
+            return true;
         }
         false
     }
 
-    fn scan_whitespace(&mut self, c: char) -> (Token, u32) {
-        if is_single_char_newline(c) {
-            self.r.advance();
-            return (Token::Newline, self.r.current_position());
-        }
-        else if self.advance_long_newline(c) {
-            self.r.advance();
-            return (Token::Newline, self.r.current_position());
-        }
-        else {            
-            self.r.advance();
+    fn scan_whitespace(&mut self, c: char) -> Token {
+        if self.advance_newline(c) {
+            return Token::Newline;
         }
         loop {
-            let last = self.r.current_position();
+            self.r.advance();
             match self.r.peek() {
                 Some(c) => {
-                    if !c.is_whitespace() || is_single_char_newline(c) {
+                    if !c.is_whitespace() ||  self.peek_newline(c) {
                         break;
-                    }
-                    let curr = self.r.current_position();
-                    if self.advance_long_newline(c) {
-                        self.abandon_char('\r', last);
-                        return (Token::Whitespace, curr)
-                    }
-                    else if c == '\r' {
-                        continue;
                     }
                 }
                 None => { break; }
             }
-            self.r.advance();
         }
-        (Token::Whitespace, self.r.current_position())
+        Token::Whitespace
     }
 
     fn advance_literal_or_lifetime(&mut self, c_end: char, allow_unicode: bool, mut look_for_lifetime: bool) -> bool {
@@ -564,21 +542,25 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
     }
 
     fn advance_float_from_dot(&mut self, float_start: u32) -> (Token, u32) {
-        let prev = self.r.current_position();
-        self.r.advance();
-        match self.r.peek() {
-            None => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
+        match self.r.peek2() {
+            None => {
+                self.r.advance();
+                (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position())
+            }
             Some(c) => {
                 match c {
                     '0'...'9' => {
+                        self.r.advance();
                         let suffix = self.advance_float_from_fractional();
-                        return (Token::FloatLiteral(suffix), self.r.current_position());
+                        (Token::FloatLiteral(suffix), self.r.current_position())
                     }
                     c if UnicodeXID::is_xid_start(c) || c == '.' => { // field access, <Dot> or <DotDot>, abandon and rewind
-                        self.abandon_char('.', prev);
-                        return (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), float_start);
+                        (Token::IntegerLiteral(IntegerLiteralBase::Decimal, IntegerLiteralSuffix::None), float_start)
                     },
-                    _ => return (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position()),
+                    _ => {
+                        self.r.advance();
+                        (Token::FloatLiteral(FloatLiteralSuffix::None), self.r.current_position())
+                    }
                 }
             }
         }
@@ -780,26 +762,11 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
         t
     }
 
-    fn abandon_char(&mut self, c: char, pos: u32) {
-        debug_assert!(self.abandoned_char.is_none());
-        self.abandoned_char = Some((c, pos));
-    }
-
-    fn peek_abandoned(&mut self) -> Option<char> {
-        if let Some((c,_)) = self.abandoned_char { Some(c) }
-        else { self.r.peek() }
-    }
-
-    fn advance_abandoned(&mut self) {
-        if self.abandoned_char.is_some() { self.abandoned_char = None }
-        else { self.r.advance() }
-    }
-
     fn scan_token(&mut self) -> Option<(Token, Span)> {
-        let start = self.abandoned_char.map(|(_, pos)| pos).unwrap_or_else(|| self.r.current_position());
+        let start = self.r.current_position();
         let result = self.scan_token_inner();
         self.err_recovery = false;
-        return result.map(|(token, end)| (token, Span { start: start, end: end }));
+        result.map(|(token, end)| (token, Span { start: start, end: end }))
     }
 
     fn scan_raw_literal(&mut self) {
@@ -830,13 +797,13 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
     }
 
     fn scan_token_inner(&mut self) -> Option<(Token, u32)> {
-        let curr = self.peek_abandoned();
+        let curr = self.r.peek();
         if curr.is_none() {
             return None;
         }
         let curr = curr.unwrap();
         if curr.is_whitespace() {
-            return Some(self.scan_whitespace(curr));
+            return Some((self.scan_whitespace(curr), self.r.current_position()));
         }
         let token = match curr {
             '"' => {
@@ -967,7 +934,7 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
             },
             '@' => self.eat(Token::At),
             '.' => {
-                self.advance_abandoned();
+                self.r.advance();
                 match self.r.peek() {
                     Some('.') => {
                         self.r.advance();
@@ -1087,12 +1054,12 @@ impl<'a, S:StringScanner> Lexer<'a, S> {
     }
 }
 
-pub struct LexerIterator<'e:, S:StringScanner> {
+pub struct LexerIterator<'e:, S:Scanner> {
     lexer: Lexer<'e, S>,
     seen_char: bool
 }
 
-impl<'_, S:StringScanner> LexerIterator<'_, S> {
+impl<'_, S:Scanner> LexerIterator<'_, S> {
     fn raise_error_on_illegal_token(&mut self, result: Option<(Token, Span)>) {
         if self.seen_char { 
             if let Some((Token::Ident, ident_span)) = result {
@@ -1109,44 +1076,39 @@ impl<'_, S:StringScanner> LexerIterator<'_, S> {
             },
         }
     }
-
-    fn drop_state(&mut self) {
-        self.lexer.abandoned_char = None;
-    }
 }
 
-impl<'_, S:StringScanner> Iterator for LexerIterator<'_, S> {
+impl<'_, S:Scanner> Iterator for LexerIterator<'_, S> {
     type Item = (Token, Span);
 
     // Most of this code is proper error handling of 'a'b
     fn next(&mut self) -> Option<(Token, Span)> {
         let result = self.lexer.scan_token();
         self.raise_error_on_illegal_token(result);
-        if result.is_none() { self.drop_state() };
         return result;
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{SimpleStringScanner, Lexer, LexingError};
+    use super::{SliceScanner, Lexer, LexingError};
     use super::token::{Token, StringLiteralKind};
 
     #[allow(dead_code)]
-    fn fail_on_parse_error(_: &Lexer<SimpleStringScanner>, er: LexingError, i: u32) {
+    fn fail_on_parse_error(_: &Lexer<SliceScanner>, er: LexingError, i: u32) {
         panic!(format!("{:?}", (er,i)));
     }
 
     #[allow(dead_code)]
-    fn prepare_lexer<'a>(ss: String) -> Lexer<'a, SimpleStringScanner> {
-        let scanner = SimpleStringScanner::new(ss);
+    fn prepare_lexer<'a>(ss: &'a str) -> Lexer<'a, SliceScanner<'a>> {
+        let scanner = SliceScanner::new(ss);
         Lexer::new(scanner, Some(Box::new(fail_on_parse_error)))
     }
 
     #[test]
     fn lex_whitespace() {
         let text = "   \t \r \r";
-        let mut lexer = prepare_lexer(text.to_string());
+        let mut lexer = prepare_lexer(text);
         let span_opt = lexer.scan_token();
         assert!(span_opt.is_some());
         let (token, span) = span_opt.unwrap();
@@ -1160,7 +1122,7 @@ mod test {
     #[test]
     fn lex_string() {
         let text = "\"adąęa\"";
-        let mut lexer = prepare_lexer(text.to_string());
+        let mut lexer = prepare_lexer(text);
         let span_opt = lexer.scan_token();
         assert!(span_opt.is_some());
         assert!(lexer.scan_token().is_none());
@@ -1174,7 +1136,7 @@ mod test {
     #[test]
     fn fail_on_eof() {    
         let text = "\"abc";
-        let scanner = SimpleStringScanner::new(text.to_string());
+        let scanner = SliceScanner::new(text);
         let (mut error, span_opt) : (Option<_>, _);
         error = None;
         span_opt = {
@@ -1195,7 +1157,7 @@ mod test {
     #[test]
     fn fail_on_non_ascii() {    
         let text = "b\"aębc\"";
-        let scanner = SimpleStringScanner::new(text.to_string());
+        let scanner = SliceScanner::new(text);
         let mut error = None;
         let mut err_idx = 0;
         let mut err_count = 0i32;
@@ -1225,7 +1187,7 @@ mod test {
         let text = ["'\\x", "'\\xf", "'\\xff"];
         let i = ::std::cell::Cell::new(3);
         for t in text.iter() {
-            let scanner = SimpleStringScanner::new(t.to_string());
+            let scanner = SliceScanner::new(t);
             let mut lexer = Lexer::new(scanner, Some(Box::new(|_, er, idx| {
                 assert!((idx as usize) == i.get());
                 assert!(er == LexingError::Eof);
